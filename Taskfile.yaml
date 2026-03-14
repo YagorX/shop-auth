@@ -1,0 +1,25 @@
+version: "3"
+
+vars:
+  MIGRATIONS_PATH: "./migrations"
+
+tasks:
+  db-up:
+    desc: "Start PostgreSQL (docker compose)"
+    cmds:
+      - docker compose up -d postgres
+
+  db-down:
+    desc: "Stop PostgreSQL (docker compose)"
+    cmds:
+      - docker compose down
+
+  migrate:
+    desc: "Apply database migrations (runs migrate container once)"
+    cmds:
+      - docker compose run --rm migrate
+
+  run:
+    desc: "Run the SSO server"
+    cmds:
+      - go run ./cmd/sso/main.go -config ./config/local.yaml

@@ -1,0 +1,28 @@
+service_name: auth-service
+env: test
+version: test
+
+log_level: debug
+shutdown_timeout: 10s
+
+token_ttl: 1h
+refresh_ttl: 168h
+
+grpc:
+  port: 44044
+  timeout: 5s
+
+http:
+  port: 8082
+  timeout: 5s
+
+otlp:
+  endpoint: localhost:4317
+
+postgres:
+  host: localhost
+  port: 5454
+  db_name: authdb
+  user: postgres
+  password: postgres
+  ssl_mode: disable

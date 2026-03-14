@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SSO Test UI</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 900px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; }
+    .row { display: grid; grid-template-columns: 140px 1fr; gap: 10px; align-items: center; margin: 8px 0; }
+    input, textarea { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #ccc; }
+    button { padding: 8px 12px; border-radius: 10px; border: 1px solid #aaa; background: #fff; cursor: pointer; }
+    button:hover { background: #f5f5f5; }
+    pre { background: #0b1020; color: #e6e6e6; padding: 12px; border-radius: 12px; overflow: auto; }
+    .small { color:#666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h2>SSO ручное тестирование</h2>
+  <div class="small">Gateway: <code>http://localhost:8080</code> → gRPC: <code>localhost:44044</code></div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Register</h3>
+      <div class="row"><div>Email</div><input id="reg_email" /></div>
+      <div class="row"><div>Password</div><input id="reg_pass" type="password" /></div>
+      <button onclick="register()">Register</button>
+    </div>
+
+    <div class="card">
+      <h3>Login</h3>
+      <div class="row"><div>Email</div><input id="login_email" /></div>
+      <div class="row"><div>Password</div><input id="login_pass" type="password" /></div>
+      <div class="row"><div>app_id</div><input id="login_app" type="number" value="1" /></div>
+      <div class="row"><div>device_id</div><input id="login_device" value="dev-1" /></div>
+      <button onclick="login()">Login</button>
+    </div>
+
+    <div class="card">
+      <h3>Validate token</h3>
+      <div class="row"><div>token</div><textarea id="val_token" rows="3"></textarea></div>
+      <div class="row"><div>app_id</div><input id="val_app" type="number" value="1" /></div>
+      <button onclick="validateToken()">Validate</button>
+    </div>
+
+    <div class="card">
+      <h3>Refresh</h3>
+      <div class="row"><div>refresh_token</div><textarea id="ref_token" rows="2"></textarea></div>
+      <div class="row"><div>app_id</div><input id="ref_app" type="number" value="1" /></div>
+      <div class="row"><div>device_id</div><input id="ref_device" value="dev-1" /></div>
+      <button onclick="refresh()">Refresh</button>
+    </div>
+
+    <div class="card">
+      <h3>Logout</h3>
+      <div class="row"><div>refresh_token</div><textarea id="lo_token" rows="2"></textarea></div>
+      <div class="row"><div>app_id</div><input id="lo_app" type="number" value="1" /></div>
+      <div class="row"><div>device_id</div><input id="lo_device" value="dev-1" /></div>
+      <button onclick="logout()">Logout</button>
+    </div>
+
+    <div class="card">
+      <h3>IsAdmin</h3>
+      <div class="row"><div>user_uuid</div><input id="adm_uuid" /></div>
+      <button onclick="isAdmin()">IsAdmin</button>
+    </div>
+
+    <div class="card">
+      <h3>Output</h3>
+      <pre id="out">{}</pre>
+      <div class="small">Подсказка: после Login токены автоматически подставятся в поля Validate/Refresh/Logout.</div>
+    </div>
+  </div>
+
+<script>
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    return data;
+  }
+
+  function setOut(v) {
+    document.getElementById("out").textContent = JSON.stringify(v, null, 2);
+  }
+
+  async function register() {
+    try {
+      const email = document.getElementById("reg_email").value;
+      const password = document.getElementById("reg_pass").value;
+      const r = await api("/api/register", {email, password});
+      setOut(r);
+      if (r.user_uuid) document.getElementById("adm_uuid").value = r.user_uuid;
+      // копируем email/pass в login
+      document.getElementById("login_email").value = email;
+      document.getElementById("login_pass").value = password;
+    } catch (e) { setOut({error: e.message}); }
+  }
+
+  async function login() {
+    try {
+      const email = document.getElementById("login_email").value;
+      const password = document.getElementById("login_pass").value;
+      const app_id = Number(document.getElementById("login_app").value);
+      const device_id = document.getElementById("login_device").value;
+      const r = await api("/api/login", {email, password, app_id, device_id});
+      setOut(r);
+      if (r.access_token) document.getElementById("val_token").value = r.access_token;
+      if (r.refresh_token) {
+        document.getElementById("ref_token").value = r.refresh_token;
+        document.getElementById("lo_token").value = r.refresh_token;
+      }
+      document.getElementById("val_app").value = app_id;
+      document.getElementById("ref_app").value = app_id;
+      document.getElementById("lo_app").value = app_id;
+      document.getElementById("ref_device").value = device_id;
+      document.getElementById("lo_device").value = device_id;
+    } catch (e) { setOut({error: e.message}); }
+  }
+
+  async function validateToken() {
+    try {
+      const token = document.getElementById("val_token").value.trim();
+      const app_id = Number(document.getElementById("val_app").value);
+      const r = await api("/api/validate", {token, app_id});
+      setOut(r);
+    } catch (e) { setOut({error: e.message}); }
+  }
+
+  async function refresh() {
+    try {
+      const refresh_token = document.getElementById("ref_token").value.trim();
+      const app_id = Number(document.getElementById("ref_app").value);
+      const device_id = document.getElementById("ref_device").value.trim();
+      const r = await api("/api/refresh", {refresh_token, app_id, device_id});
+      setOut(r);
+      if (r.access_token) document.getElementById("val_token").value = r.access_token;
+      if (r.refresh_token) {
+        document.getElementById("ref_token").value = r.refresh_token;
+        document.getElementById("lo_token").value = r.refresh_token;
+      }
+    } catch (e) { setOut({error: e.message}); }
+  }
+
+  async function logout() {
+    try {
+      const refresh_token = document.getElementById("lo_token").value.trim();
+      const app_id = Number(document.getElementById("lo_app").value);
+      const device_id = document.getElementById("lo_device").value.trim();
+      const r = await api("/api/logout", {refresh_token, app_id, device_id});
+      setOut(r);
+    } catch (e) { setOut({error: e.message}); }
+  }
+
+  async function isAdmin() {
+    try {
+      const user_uuid = document.getElementById("adm_uuid").value.trim();
+      const r = await api("/api/is-admin", {user_uuid});
+      setOut(r);
+    } catch (e) { setOut({error: e.message}); }
+  }
+</script>
+</body>
+</html>
