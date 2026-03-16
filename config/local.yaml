@@ -26,3 +26,9 @@ postgres:
   user: postgres
   password: postgres
   ssl_mode: disable
+
+tls:
+  enabled: false
+  cert_file: ""
+  key_file: ""
+  ca_file: ""

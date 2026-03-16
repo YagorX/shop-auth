@@ -22,11 +22,21 @@ type Config struct {
 	HTTP            HTTPConfig     `yaml:"http"`
 	OTLP            OTLPConfig     `yaml:"otlp"`
 	Postgres        PostgresConfig `yaml:"postgres"`
+	TLS             TLSConfig      `yaml:"tls"`
 }
 
 type GRPCConfig struct {
 	Port    int           `yaml:"port" env-default:"44044"`
 	Timeout time.Duration `yaml:"timeout" env-default:"5s"`
+}
+
+type TLSConfig struct {
+	Enabled           bool   `yaml:"enabled" env-default:"false"`
+	CertFile          string `yaml:"cert_file" env-default:""`
+	KeyFile           string `yaml:"key_file" env-default:""`
+	CAFile            string `yaml:"ca_file" env-default:""`
+	ClientCAFile      string `yaml:"client_ca_file" env-default:""`
+	RequireClientCert bool   `yaml:"require_client_cert" env-default:"false"`
 }
 
 type HTTPConfig struct {
@@ -130,6 +140,17 @@ func (c *Config) Validate() error {
 	}
 	if err := validateSSLMode(c.Postgres.SSLMode); err != nil {
 		return err
+	}
+	if c.TLS.Enabled {
+		if c.TLS.CertFile == "" {
+			return fmt.Errorf("tls.cert_file is required when tls.enabled=true")
+		}
+		if c.TLS.KeyFile == "" {
+			return fmt.Errorf("tls.key_file is required when tls.enabled=true")
+		}
+		if c.TLS.RequireClientCert && c.TLS.ClientCAFile == "" {
+			return fmt.Errorf("tls.client_ca_file is required when tls.require_client_cert=true")
+		}
 	}
 
 	return nil

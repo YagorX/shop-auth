@@ -1,3 +1,18 @@
 *.log
 *.db
 *.txt
+
+# Private keys and certificate requests
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.csr
+*.srl
+
+# Generated certificates by default
+*.crt
+*.cer
+*.der

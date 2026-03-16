@@ -2,11 +2,14 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	grpcapp "sso/internal/app/grpc"
@@ -20,6 +23,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 type App struct {
@@ -48,6 +52,49 @@ func (c *readinessChecker) Check(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func buildGRPCServerOptions(cfg *config.Config) ([]grpc.ServerOption, error) {
+	if cfg == nil {
+		return nil, errors.New("config is nil")
+	}
+
+	grpcOpts := []grpc.ServerOption{
+		grpc.StatsHandler(observability.GRPCServerStatsHandler()),
+	}
+
+	if !cfg.TLS.Enabled {
+		return grpcOpts, nil
+	}
+
+	serverCert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load grpc tls key pair: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	if cfg.TLS.RequireClientCert {
+		caPEM, err := os.ReadFile(cfg.TLS.ClientCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read client ca file: %w", err)
+		}
+
+		clientCAPool := x509.NewCertPool()
+		if !clientCAPool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("append client ca cert to pool")
+		}
+
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		tlsConfig.ClientCAs = clientCAPool
+	}
+
+	grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+
+	return grpcOpts, nil
 }
 
 func New(ctx context.Context, cfg *config.Config) (*App, error) {
@@ -114,11 +161,18 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		storage,
 	)
 
+	grpcOpts, err := buildGRPCServerOptions(cfg)
+	if err != nil {
+		_ = db.Close()
+		_ = shutdownTracing(context.Background())
+		return nil, fmt.Errorf("build grpc server options: %w", err)
+	}
+
 	grpcRuntime := grpcapp.New(
 		runtimeLogger.Logger,
 		authService,
 		cfg.GRPC.Port,
-		grpc.StatsHandler(observability.GRPCServerStatsHandler()),
+		grpcOpts...,
 	)
 
 	httpRouter := httpv1.NewRouter(httpv1.RouterDeps{

@@ -26,3 +26,12 @@ postgres:
   user: postgres
   password: postgres
   ssl_mode: disable
+
+tls:
+  enabled: true
+  cert_file: /app/certs/auth-service.crt
+  key_file: /app/certs/auth-service.key
+  ca_file: /app/certs/ca.crt
+  client_ca_file: /app/certs/ca.crt
+  require_client_cert: true
+
