@@ -169,7 +169,13 @@ func (s *serverAPI) Logout(ctx context.Context, req *authv1.LogoutRequest) (*aut
 		return nil, err
 	}
 
-	_ = s.auth.Logout(ctx, req.GetRefreshToken(), req.GetAppId(), req.GetDeviceId())
+	err := s.auth.Logout(ctx, req.GetRefreshToken(), req.GetAppId(), req.GetDeviceId())
+	if err != nil {
+		if errors.Is(err, storage.ErrInvalidToken) {
+			return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
+		}
+		return nil, status.Error(codes.Internal, "internal error")
+	}
 
 	return &authv1.LogoutResponse{IsLogout: true}, nil
 }

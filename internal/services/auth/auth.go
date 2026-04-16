@@ -313,7 +313,15 @@ func (a *Auth) Logout(ctx context.Context, refreshToken string, appID int64, dev
 	}
 
 	hash := sha256Hex(refreshToken)
-	_ = a.refreshRevoker.RevokeRefreshSession(ctx, hash, deviceID, appID)
+	err = a.refreshRevoker.RevokeRefreshSession(ctx, hash, deviceID, appID)
+	if err != nil {
+		if errors.Is(err, storage.ErrRefreshSessionNotFound) {
+			log.Info("refresh session already absent during logout")
+			return nil
+		}
+		log.Error("failed to revoke refresh session", sl.Err(err))
+		return fmt.Errorf("%s: %w", op, err)
+	}
 
 	return nil
 }

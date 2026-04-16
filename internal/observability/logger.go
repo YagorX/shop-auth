@@ -39,6 +39,14 @@ func NewLogger(opts LoggerOptions) *RuntimeLogger {
 	}
 }
 
+func (r *RuntimeLogger) GetSlog() *slog.Logger {
+	if r == nil || r.level == nil {
+		return nil
+	}
+
+	return r.Logger
+}
+
 func (r *RuntimeLogger) SetLevel(level string) error {
 	if r == nil || r.level == nil {
 		return fmt.Errorf("logger is not initialized")

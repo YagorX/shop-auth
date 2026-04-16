@@ -8,6 +8,7 @@ import (
 type LogLevelController interface {
 	SetLevel(level string) error
 	Level() slog.Level
+	GetSlog() *slog.Logger
 }
 
 type ReadinessChecker interface {

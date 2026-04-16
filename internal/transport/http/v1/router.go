@@ -7,6 +7,7 @@ import (
 	"sso/internal/observability"
 	"sso/internal/transport/http/v1/contracts"
 	"sso/internal/transport/http/v1/handlers"
+	"sso/internal/transport/http/v1/middleware"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -28,6 +29,7 @@ func (r *statusRecorder) WriteHeader(statusCode int) {
 
 func NewRouter(deps RouterDeps) http.Handler {
 	mux := http.NewServeMux()
+	logger := deps.LogLevelController.GetSlog()
 
 	healthHandler := handlers.NewHealthHandler(deps.ReadinessChecker)
 	adminHandler := handlers.NewAdminHandler(deps.LogLevelController)
@@ -37,7 +39,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/admin/log-level", adminHandler.LogLevel)
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		recorder := &statusRecorder{
 			ResponseWriter: w,
@@ -47,5 +49,6 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.ServeHTTP(recorder, r)
 
 		observability.ObserveHTTPRequest(r.Method, r.URL.Path, recorder.status, started)
-	})
+	}),
+		middleware.Recovery(logger))
 }
