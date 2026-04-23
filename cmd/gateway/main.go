@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -248,7 +249,9 @@ func ctxWithTimeout(r *http.Request, d time.Duration) (context.Context, context.
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("writeJSON: failed to encode response", slog.String("error", err.Error()))
+	}
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {

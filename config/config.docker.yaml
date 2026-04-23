@@ -20,12 +20,13 @@ otlp:
   endpoint: jaeger:4317
 
 postgres:
-  host: auth-postgres
+  host: postgres-haproxy
   port: 5432
   db_name: authdb
-  user: postgres
-  password: postgres
+  user: auth_user
+  password: auth_password
   ssl_mode: disable
+
 
 tls:
   enabled: true

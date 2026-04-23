@@ -60,6 +60,11 @@ func (j *JWTAdapter) getApp(ctx context.Context, appID int64) (models.App, error
 	}
 
 	j.cacheMux.Lock()
+	// double-check: другая горутина могла уже записать пока мы ходили в БД
+	if existing, exists := j.appCache[appID]; exists {
+		j.cacheMux.Unlock()
+		return existing, nil
+	}
 	j.appCache[appID] = app
 	j.cacheMux.Unlock()
 

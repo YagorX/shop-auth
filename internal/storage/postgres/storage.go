@@ -385,7 +385,10 @@ func (s *Storage) RotateRefreshSession(
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	affected, _ := res.RowsAffected()
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
 	if affected == 0 {
 		return fmt.Errorf("%s: %w", op, storage.ErrRefreshSessionNotFound)
 	}
@@ -412,7 +415,10 @@ func (s *Storage) RevokeRefreshSession(ctx context.Context, hash string, deviceI
 		return fmt.Errorf("%s: %w", op, err)
 	}
 
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
 	if n == 0 {
 		return fmt.Errorf("%s: %w", op, storage.ErrRefreshSessionNotFound)
 	}
