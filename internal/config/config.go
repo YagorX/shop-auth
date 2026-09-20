@@ -49,12 +49,19 @@ type OTLPConfig struct {
 }
 
 type PostgresConfig struct {
-	Host     string `yaml:"host" env-default:"localhost"`
-	Port     int    `yaml:"port" env-default:"5432"`
-	DBName   string `yaml:"db_name" env-default:"authdb"`
-	User     string `yaml:"user" env-default:"postgres"`
-	Password string `yaml:"password" env-default:"postgres"`
-	SSLMode  string `yaml:"ssl_mode" env-default:"disable"`
+	Host             string        `yaml:"host" env-default:"localhost"`
+	Port             int           `yaml:"port" env-default:"5432"`
+	DBName           string        `yaml:"db_name" env-default:"authdb"`
+	User             string        `yaml:"user" env-default:"postgres"`
+	Password         string        `yaml:"password" env-default:"postgres"`
+	SSLMode          string        `yaml:"ssl_mode" env-default:"disable"`
+	StatementTimeout time.Duration `yaml:"statement_timeout" env-default:"5s"`
+	MaxOpenConns     int           `yaml:"max_open_conns"    env-default:"25"`
+	MaxIdleConns     int           `yaml:"max_idle_conns"    env-default:"25"`
+	ConnMaxLifetime  time.Duration `yaml:"conn_max_lifetime" env-default:"5m"`
+	ConnMaxIdleTime  time.Duration `yaml:"conn_max_idle_time" env-default:"1m"`
+	ConnectTimeout   time.Duration `yaml:"connect_timeout"   env-default:"5s"`
+	ConnectRetries   int           `yaml:"connect_retries"   env-default:"6"`
 }
 
 func MustLoad() *Config {
@@ -68,18 +75,6 @@ func MustLoad() *Config {
 
 func MustLoadByPath(path string) *Config {
 	return mustLoadByPath(path)
-}
-
-func (c *Config) PostgresDSN() string {
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		c.Postgres.User,
-		c.Postgres.Password,
-		c.Postgres.Host,
-		c.Postgres.Port,
-		c.Postgres.DBName,
-		c.Postgres.SSLMode,
-	)
 }
 
 func (c *Config) Validate() error {
@@ -119,6 +114,28 @@ func (c *Config) Validate() error {
 	}
 	if c.HTTP.Timeout <= 0 {
 		return fmt.Errorf("http.timeout must be > 0")
+	}
+	if c.Postgres.MaxIdleConns < 0 {
+		return fmt.Errorf("postgres.max_idle_conns must be >= 0")
+	}
+	// 0 в database/sql означает «без лимита» / «жить вечно» — ровно то, от чего защищаемся.
+	if c.Postgres.MaxOpenConns <= 0 {
+		return fmt.Errorf("postgres.max_open_conns must be > 0")
+	}
+	if c.Postgres.ConnMaxLifetime <= 0 {
+		return fmt.Errorf("postgres.conn_max_lifetime must be > 0")
+	}
+	if c.Postgres.ConnMaxIdleTime < 0 {
+		return fmt.Errorf("postgres.conn_max_idle_time must be >= 0")
+	}
+	if c.Postgres.ConnectTimeout <= 0 {
+		return fmt.Errorf("postgres.connect_timeout must be > 0")
+	}
+	if c.Postgres.ConnectRetries <= 0 {
+		return fmt.Errorf("postgres.connect_retries must be >= 1")
+	}
+	if c.Postgres.MaxIdleConns > c.Postgres.MaxOpenConns {
+		return fmt.Errorf("postgres.max_idle_conns must be <= postgres.max_open_conns")
 	}
 	if strings.TrimSpace(c.OTLP.Endpoint) == "" {
 		return fmt.Errorf("otlp.endpoint is required")

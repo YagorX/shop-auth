@@ -3,10 +3,12 @@ package suite
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	authv1 "github.com/YagorX/shop-contracts/gen/go/proto/auth/v1"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"sso/internal/config"
+	"sso/internal/storage/postgres"
 )
 
 type Suite struct {
@@ -49,16 +52,35 @@ func New(t *testing.T) (context.Context, *Suite) {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.GRPC.Timeout)
 	t.Cleanup(cancel)
 
-	// DB
-	db, err := sql.Open("pgx", cfg.PostgresDSN())
-	if err != nil {
-		t.Fatalf("db open failed: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	postgresConfig := postgres.ConnConfig{
+		Host:     cfg.Postgres.Host,
+		Port:     cfg.Postgres.Port,
+		DBName:   cfg.Postgres.DBName,
+		User:     cfg.Postgres.User,
+		Password: cfg.Postgres.Password,
+		SSLMode:  cfg.Postgres.SSLMode,
 
-	if err := db.PingContext(ctx); err != nil {
-		t.Fatalf("db ping failed: %v", err)
+		AppName:          cfg.ServiceName,
+		StatementTimeout: cfg.Postgres.StatementTimeout,
+
+		MaxOpenConns:    cfg.Postgres.MaxOpenConns,
+		MaxIdleConns:    cfg.Postgres.MaxIdleConns,
+		ConnMaxLifetime: cfg.Postgres.ConnMaxLifetime,
+		ConnMaxIdleTime: cfg.Postgres.ConnMaxIdleTime,
+
+		ConnectTimeout: cfg.Postgres.ConnectTimeout,
+		ConnectRetries: 1,
+		RetryBackoff:   time.Second,
+		MaxBackoff:     10 * time.Second,
 	}
+
+	// DB
+	db, err := postgres.Connect(ctx, &postgresConfig, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("connect postgres: %v", err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
 
 	// Seed role "user" (нужно для SaveUser, если ты выставляешь role_id через SELECT)
 	ensureRole(t, ctx, db, "user", "default user role")

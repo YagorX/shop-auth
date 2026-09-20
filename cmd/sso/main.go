@@ -13,7 +13,11 @@ import (
 func main() {
 	cfg := config.MustLoad()
 
-	application, err := app.New(context.Background(), cfg)
+	// Контекст отменяется по SIGTERM/SIGINT уже на старте: app.New прерывает ретраи подключения к БД.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	application, err := app.New(ctx, cfg)
 	if err != nil {
 		slog.Error("failed to initialize application", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -26,17 +30,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
-
 	select {
-	case sign := <-stop:
-		slog.Info("stopping application", slog.String("signal", sign.String()))
+	case <-ctx.Done():
+		slog.Info("stopping application: shutdown signal received")
 	case err := <-application.Errors():
 		if err != nil {
 			slog.Error("application stopped with error", slog.String("error", err.Error()))
 		}
 	}
+
+	// Возвращаем дефолтную обработку сигналов: повторный Ctrl+C убьёт процесс, не дожидаясь graceful shutdown.
+	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()

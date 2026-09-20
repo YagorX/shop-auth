@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"log/slog"
@@ -37,11 +37,8 @@ func New(db *sql.DB, log *slog.Logger) (*Storage, error) {
 
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return true
-	}
-	// fallback: когда ошибка обёрнута так, что PgError не достаётся
-	return strings.Contains(err.Error(), "SQLSTATE 23505")
+
+	return errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation
 }
 
 func (s *Storage) SaveUser(ctx context.Context, username, email string, passHash []byte) (uuid.UUID, error) {
@@ -71,7 +68,7 @@ func (s *Storage) User(ctx context.Context, email string) (models.User, error) {
 	q := `
 		SELECT id, uuid, username, email, password_hash, role_id, is_active
 		FROM users
-		WHERE email = $1 or username = $1
+		WHERE (email = $1 or username = $1) and is_active = true
 		LIMIT 1
 	`
 
@@ -113,7 +110,7 @@ func (s *Storage) UserByID(ctx context.Context, userID int64) (models.User, erro
 	q := `
 		SELECT id, uuid, username, email, password_hash, role_id, is_active
 		FROM users
-		WHERE id = $1
+		WHERE id = $1 and is_active = true
 		LIMIT 1
 	`
 
@@ -155,7 +152,7 @@ func (s *Storage) UserByUUID(ctx context.Context, userUUID uuid.UUID) (models.Us
 	q := `
 		SELECT id, uuid, username, email, password_hash, role_id, is_active
 		FROM users
-		WHERE uuid = $1
+		WHERE uuid = $1 and is_active = true
 		LIMIT 1
 	`
 
@@ -198,7 +195,7 @@ func (s *Storage) IsAdminByUUID(ctx context.Context, userUUID uuid.UUID) (bool, 
 		SELECT COALESCE(r.name = 'admin', FALSE)
 		FROM users u
 		LEFT JOIN roles r ON r.id = u.role_id
-		WHERE u.uuid = $1
+		WHERE u.uuid = $1 and u.is_active = true
 	`
 
 	var isAdmin bool

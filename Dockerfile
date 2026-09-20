@@ -20,7 +20,7 @@ RUN apk add --no-cache ca-certificates \
 COPY --from=builder /out/auth-service /app/auth-service
 COPY config/config.docker.yaml /app/config/config.docker.yaml
 COPY migrations /app/migrations
-COPY certs ./certs
+# Сертификаты приходят через volume ../infra/certs:/app/certs (см. compose), в образ не вкапываются.
 
 RUN chown -R app:app /app
 

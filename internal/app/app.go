@@ -38,22 +38,6 @@ type App struct {
 	errCh           chan error
 }
 
-type readinessChecker struct {
-	db *sql.DB
-}
-
-func (c *readinessChecker) Check(ctx context.Context) error {
-	if c == nil || c.db == nil {
-		return errors.New("postgres is not initialized")
-	}
-
-	if err := c.db.PingContext(ctx); err != nil {
-		return fmt.Errorf("postgres not ready: %w", err)
-	}
-
-	return nil
-}
-
 func buildGRPCServerOptions(cfg *config.Config) ([]grpc.ServerOption, error) {
 	if cfg == nil {
 		return nil, errors.New("config is nil")
@@ -120,22 +104,35 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	)
 	if err != nil {
 		runtimeLogger.Logger.Warn("tracing is disabled", slog.String("error", err.Error()))
-		shutdownTracing = nil
+		shutdownTracing = func(context.Context) error { return nil }
 	}
 
-	db, err := sql.Open("pgx", cfg.PostgresDSN())
+	postgrecfg := postgres.ConnConfig{
+		Host:     cfg.Postgres.Host,
+		Port:     cfg.Postgres.Port,
+		DBName:   cfg.Postgres.DBName,
+		User:     cfg.Postgres.User,
+		Password: cfg.Postgres.Password,
+		SSLMode:  cfg.Postgres.SSLMode,
+
+		AppName:          cfg.ServiceName,
+		StatementTimeout: cfg.Postgres.StatementTimeout,
+
+		MaxOpenConns:    cfg.Postgres.MaxOpenConns,
+		MaxIdleConns:    cfg.Postgres.MaxIdleConns,
+		ConnMaxLifetime: cfg.Postgres.ConnMaxLifetime,
+		ConnMaxIdleTime: cfg.Postgres.ConnMaxIdleTime,
+
+		ConnectTimeout: cfg.Postgres.ConnectTimeout,
+		ConnectRetries: cfg.Postgres.ConnectRetries,
+		RetryBackoff:   time.Second,
+		MaxBackoff:     10 * time.Second,
+	}
+
+	db, err := postgres.Connect(ctx, &postgrecfg, runtimeLogger.Logger)
 	if err != nil {
 		_ = shutdownTracing(context.Background())
-		return nil, fmt.Errorf("open postgres: %w", err)
-	}
-
-	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer pingCancel()
-
-	if err := db.PingContext(pingCtx); err != nil {
-		_ = db.Close()
-		_ = shutdownTracing(context.Background())
-		return nil, fmt.Errorf("ping postgres: %w", err)
+		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
 
 	storage, err := postgres.New(db, runtimeLogger.Logger)
@@ -172,12 +169,13 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		runtimeLogger.Logger,
 		authService,
 		cfg.GRPC.Port,
+		cfg.GRPC.Timeout,
 		grpcOpts...,
 	)
 
 	httpRouter := httpv1.NewRouter(httpv1.RouterDeps{
 		LogLevelController: runtimeLogger,
-		ReadinessChecker:   &readinessChecker{db: db},
+		ReadinessChecker:   postgres.NewHealthChecker(db, 2*time.Second),
 	})
 
 	httpServer := &http.Server{

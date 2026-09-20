@@ -26,7 +26,15 @@ postgres:
   user: auth_user
   password: auth_password
   ssl_mode: disable
-
+  statement_timeout: 5s
+  # Пул на ОДИН инстанс. Правило: max_open_conns × число_инстансов < max_connections (100) − запас на миграции/админа.
+  # При >4 инстансах арифметика не сходится — нужен PgBouncer.
+  max_open_conns: 25
+  max_idle_conns: 25        # == max_open_conns: пул не «сдувается» между всплесками
+  conn_max_lifetime: 5m     # обязательно > 0: после failover Patroni соединения не должны жить на старом primary
+  conn_max_idle_time: 1m
+  connect_timeout: 5s
+  connect_retries: 6
 
 tls:
   enabled: true

@@ -233,9 +233,17 @@ func (a *Auth) ValidateToken(ctx context.Context, token string, appID int64) (us
 
 	log.Info("checking token")
 
-	user, err := a.userProvider.UserByUUID(ctx, userUUID)
-	if err != nil || !user.IsActive {
-		return uuid.Nil, storage.ErrUserNotFound
+	// Деактивированный пользователь не возвращается запросом, это ErrUserNotFound.
+	// Отказ базы под ту же ошибку подводить нельзя: иначе авария в Postgres выглядит
+	// как невалидные токены и разлогинивает всех разом.
+	if _, err = a.userProvider.UserByUUID(ctx, userUUID); err != nil {
+		if errors.Is(err, storage.ErrUserNotFound) {
+			return uuid.Nil, storage.ErrUserNotFound
+		}
+
+		a.log.Error("failed to get user", sl.Err(err))
+
+		return uuid.Nil, fmt.Errorf("%s: %w", op, err)
 	}
 
 	return userUUID, nil
@@ -272,7 +280,16 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int, devi
 
 	user, err := a.userProvider.UserByUUID(ctx, sess.UserUUID)
 	if err != nil {
-		return "", "", storage.ErrUserNotFound
+		// Пользователь удалён или деактивирован — сессия больше не действительна.
+		// Клиенту нужен Unauthenticated, чтобы он сбросил токены и отправил на вход,
+		// а не Internal, как было бы при ErrUserNotFound без ветки в транспорте.
+		if errors.Is(err, storage.ErrUserNotFound) {
+			return "", "", storage.ErrInvalidToken
+		}
+
+		a.log.Error("failed to get user", sl.Err(err))
+
+		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	access, err := jwt.NewToken(user, app, a.tokenTTL)
