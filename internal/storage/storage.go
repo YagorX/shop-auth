@@ -12,4 +12,5 @@ var (
 	ErrRefreshSessionNotFound = errors.New("refresh session not found")
 	ErrInvalidCredentials     = errors.New("invalid credentials")
 	ErrInvalidToken           = errors.New("invalid token")
+	ErrOverloaded             = errors.New("too many requests, please try again later")
 )
