@@ -32,3 +32,7 @@ tls:
   cert_file: ""
   key_file: ""
   ca_file: ""
+
+password_hasher:
+  max_concurrent: 0
+  max_wait: 150ms

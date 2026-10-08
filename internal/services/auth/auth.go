@@ -25,6 +25,7 @@ type Auth struct {
 	refreshProvider RefreshSessionProvider
 	refreshRotator  RefreshSessionRotator
 	refreshRevoker  RefreshSessionRevoker
+	hasher          PasswordHasher
 	log             *slog.Logger
 	tokenTTL        time.Duration
 	refreshTTL      time.Duration
@@ -77,6 +78,7 @@ func New(
 	refreshProvider RefreshSessionProvider,
 	refreshRotator RefreshSessionRotator,
 	refreshRevoker RefreshSessionRevoker,
+	hasher PasswordHasher,
 ) *Auth {
 	return &Auth{
 		userSaver:       userSaver,
@@ -90,6 +92,7 @@ func New(
 		log:             log,
 		tokenTTL:        tokenTTL,
 		refreshTTL:      refreshTTL,
+		hasher:          hasher,
 	}
 }
 
@@ -125,6 +128,16 @@ func (a *Auth) Login(ctx context.Context, emailorname, password string, appID in
 	// 	a.log.Info("invalid credentials")
 	// 	return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
 	// }
+
+	err = a.hasher.Compare(ctx, user.PasswordHash, password)
+	if err != nil {
+		if errors.Is(err, storage.ErrOverloaded) {
+			a.log.Warn("password comparison failed due to overload", sl.Err(err))
+		} else {
+			a.log.Info("invalid credentials")
+		}
+		return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
+	}
 
 	app, err := a.appProvider.App(ctx, int64(appID))
 	if err != nil {
@@ -178,6 +191,12 @@ func (a *Auth) RegisterNewUser(ctx context.Context, username, email, password st
 	// 	log.Error("failed to generate password hash", sl.Err(err))
 	// 	return uuid.Nil, fmt.Errorf("%s: %w", op, err)
 	// }
+
+	passHash, err := a.hasher.Hash(ctx, password)
+	if err != nil {
+		log.Error("failed to generate password hash", sl.Err(err))
+		return uuid.Nil, fmt.Errorf("%s: %w", op, err)
+	}
 
 	userUUID, err = a.userSaver.SaveUser(ctx, username, email, passHash)
 	if err != nil {

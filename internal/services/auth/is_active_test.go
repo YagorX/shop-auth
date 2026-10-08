@@ -107,6 +107,7 @@ func TestLoginWithDeactivatedUser(t *testing.T) {
 				nil,
 				nil,
 				nil,
+				nil,
 			)
 
 			_, _, err := auth.Login(context.Background(), "user@example.com", "password", 1, "device-1", "", "")
@@ -156,6 +157,7 @@ func TestRefreshWithDeactivatedUser(t *testing.T) {
 				stubRefreshSessionProvider{session: activeSession(userUUID)},
 				nil,
 				nil,
+				nil,
 			)
 
 			_, _, err := auth.Refresh(context.Background(), "refresh-token", 1, "device-1", "", "")
@@ -201,6 +203,7 @@ func TestValidateTokenWithDeactivatedUser(t *testing.T) {
 				stubTokenManager{userUUID: userUUID},
 				time.Hour,
 				time.Hour,
+				nil,
 				nil,
 				nil,
 				nil,

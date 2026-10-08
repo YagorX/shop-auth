@@ -11,18 +11,24 @@ import (
 )
 
 type Config struct {
-	ServiceName     string         `yaml:"service_name" env-default:"auth-service"`
-	Env             string         `yaml:"env" env-default:"local"`
-	Version         string         `yaml:"version" env-default:"dev"`
-	LogLevel        string         `yaml:"log_level" env-default:"info"`
-	ShutdownTimeout time.Duration  `yaml:"shutdown_timeout" env-default:"10s"`
-	TokenTTL        time.Duration  `yaml:"token_ttl" env-default:"1h"`
-	RefreshTTL      time.Duration  `yaml:"refresh_ttl" env-default:"168h"`
-	GRPC            GRPCConfig     `yaml:"grpc"`
-	HTTP            HTTPConfig     `yaml:"http"`
-	OTLP            OTLPConfig     `yaml:"otlp"`
-	Postgres        PostgresConfig `yaml:"postgres"`
-	TLS             TLSConfig      `yaml:"tls"`
+	ServiceName     string               `yaml:"service_name" env-default:"auth-service"`
+	Env             string               `yaml:"env" env-default:"local"`
+	Version         string               `yaml:"version" env-default:"dev"`
+	LogLevel        string               `yaml:"log_level" env-default:"info"`
+	ShutdownTimeout time.Duration        `yaml:"shutdown_timeout" env-default:"10s"`
+	TokenTTL        time.Duration        `yaml:"token_ttl" env-default:"1h"`
+	RefreshTTL      time.Duration        `yaml:"refresh_ttl" env-default:"168h"`
+	GRPC            GRPCConfig           `yaml:"grpc"`
+	HTTP            HTTPConfig           `yaml:"http"`
+	OTLP            OTLPConfig           `yaml:"otlp"`
+	Postgres        PostgresConfig       `yaml:"postgres"`
+	TLS             TLSConfig            `yaml:"tls"`
+	PasswordHasher  PasswordHasherConfig `yaml:"password_hasher"`
+}
+
+type PasswordHasherConfig struct {
+	MaxConcurrent int64         `yaml:"max_concurrent" env-default:"0"`
+	MaxWait       time.Duration `yaml:"max_wait" env-default:"150ms"`
 }
 
 type GRPCConfig struct {
@@ -114,6 +120,17 @@ func (c *Config) Validate() error {
 	}
 	if c.HTTP.Timeout <= 0 {
 		return fmt.Errorf("http.timeout must be > 0")
+	}
+	// 0 — автоподбор по GOMAXPROCS внутри NewBcryptHasher.
+	if c.PasswordHasher.MaxConcurrent < 0 {
+		return fmt.Errorf("password_hasher.max_concurrent must be >= 0")
+	}
+	if c.PasswordHasher.MaxWait <= 0 {
+		return fmt.Errorf("password_hasher.max_wait must be > 0")
+	}
+	// Иначе дедлайн запроса истекает раньше, чем хешер успеет отказать по перегрузке.
+	if c.PasswordHasher.MaxWait >= c.GRPC.Timeout {
+		return fmt.Errorf("password_hasher.max_wait must be < grpc.timeout")
 	}
 	if c.Postgres.MaxIdleConns < 0 {
 		return fmt.Errorf("postgres.max_idle_conns must be >= 0")

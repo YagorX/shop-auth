@@ -143,6 +143,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	jwtAdapter := authsvc.NewJWTAdapter(storage)
+	hasher := authsvc.NewBcryptHasher(cfg.PasswordHasher.MaxConcurrent, cfg.PasswordHasher.MaxWait)
 
 	authService := authsvc.New(
 		runtimeLogger.Logger,
@@ -156,6 +157,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		storage,
 		storage,
 		storage,
+		hasher,
 	)
 
 	grpcOpts, err := buildGRPCServerOptions(cfg)

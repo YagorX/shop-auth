@@ -44,3 +44,7 @@ tls:
   client_ca_file: /app/certs/ca.crt
   require_client_cert: true
 
+password_hasher:
+  max_concurrent: 0         # 0 — по GOMAXPROCS (×3/4): bcrypt грузит CPU, больше параллельных хешей = только длиннее каждый
+  max_wait: 150ms           # сколько ждать слот, прежде чем отказать ResourceExhausted; должно быть < grpc.timeout
+

@@ -35,6 +35,7 @@ func TestLogout_ReturnsInvalidTokenForEmptyRefreshToken(t *testing.T) {
 		nil,
 		nil,
 		stubRefreshSessionRevoker{},
+		nil,
 	)
 
 	err := auth.Logout(context.Background(), "", 1, "device-1")
@@ -56,6 +57,7 @@ func TestLogout_IsIdempotentWhenRefreshSessionAlreadyAbsent(t *testing.T) {
 		nil,
 		nil,
 		stubRefreshSessionRevoker{err: storage.ErrRefreshSessionNotFound},
+		nil,
 	)
 
 	err := auth.Logout(context.Background(), "refresh-token", 1, "device-1")
@@ -78,6 +80,7 @@ func TestLogout_ReturnsInfrastructureErrors(t *testing.T) {
 		nil,
 		nil,
 		stubRefreshSessionRevoker{err: wantErr},
+		nil,
 	)
 
 	err := auth.Logout(context.Background(), "refresh-token", 1, "device-1")
