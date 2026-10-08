@@ -42,6 +42,7 @@ func New(
 		grpc.ChainUnaryInterceptor(
 			deadlineInterceptor(timeout),
 			metricsInterceptor(),
+			contextErrorInterceptor(),
 			recoveryInterceptor(log),
 		),
 		// Стримы отдельной цепочкой: unary-интерцепторы их не покрывают,
@@ -108,6 +109,22 @@ func recoveryInterceptor(log *slog.Logger) grpc.UnaryServerInterceptor {
 	}
 }
 
+func contextErrorInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		resp, err := handler(ctx, req)
+		if err == nil || ctx.Err() == nil {
+			return resp, err // пункты 1 и 2
+		}
+
+		switch status.Code(err) {
+		case codes.Internal, codes.Unknown: // пункт 3
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}
+
+		return resp, err // пункт 4
+	}
+}
+
 func streamRecoveryInterceptor(log *slog.Logger) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
 		defer func() {
@@ -134,10 +151,6 @@ func recoveredError(log *slog.Logger, method string, recovered any) error {
 
 func deadlineInterceptor(timeout time.Duration) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if _, ok := ctx.Deadline(); ok {
-			return handler(ctx, req)
-		}
-
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 
