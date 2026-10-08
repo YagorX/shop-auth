@@ -261,6 +261,10 @@ go run ./cmd/sso --config config/local.yaml
 
 Или через [Taskfile](Taskfile.yaml): `task db-up`, `task migrate`, `task run`.
 
+### Нагрузочные прогоны
+
+Сценарии k6 по каждому gRPC-методу отдельно — в [`load/`](load/README.md). Там же порядок прогонов, таблица результатов и то, как по дашборду определить, во что именно упёрся метод.
+
 ### В составе платформы
 
 ```bash
