@@ -15,12 +15,24 @@ type Metrics struct {
 	AuthHTTPRequestDuration    *prometheus.HistogramVec
 	AuthGRPCRequestsTotal      *prometheus.CounterVec
 	AuthGRPCRequestDuration    *prometheus.HistogramVec
+	AuthPasswordHashDuration   *prometheus.HistogramVec
 }
 
 var (
 	metricsInstance *Metrics
 	metricsOnce     sync.Once
 )
+
+// От 100 мкс: ValidateToken отвечает за доли миллисекунды и в DefBuckets (от 5 мс)
+// целиком лёг бы в первый бакет. Верх — 5 с, это серверный дедлайн: дальше мерить нечего.
+var latencyBuckets = []float64{
+	0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005,
+	0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5,
+}
+
+// bcrypt при DefaultCost — 50–100 мс; сетка гуще именно там:
+// в общей latencyBuckets на этот диапазон приходится всего две границы.
+var passwordHashBuckets = []float64{0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1}
 
 func MustMetrics() *Metrics {
 	metricsOnce.Do(func() {
@@ -52,6 +64,10 @@ func ObserveGRPCRequest(method, code string, started time.Time) {
 	m.AuthGRPCRequestDuration.WithLabelValues(method).Observe(time.Since(started).Seconds())
 }
 
+func ObservePasswordHash(op string, started time.Time) {
+	MustMetrics().AuthPasswordHashDuration.WithLabelValues(op).Observe(time.Since(started).Seconds())
+}
+
 func newMetrics() *Metrics {
 	m := &Metrics{
 		AuthServiceRequestsTotal: prometheus.NewCounterVec(
@@ -69,7 +85,7 @@ func newMetrics() *Metrics {
 				Subsystem: "service",
 				Name:      "request_duration_seconds",
 				Help:      "Auth service request duration in seconds.",
-				Buckets:   prometheus.DefBuckets,
+				Buckets:   latencyBuckets,
 			},
 			[]string{"method"},
 		),
@@ -88,7 +104,7 @@ func newMetrics() *Metrics {
 				Subsystem: "http",
 				Name:      "request_duration_seconds",
 				Help:      "HTTP request duration in seconds for auth service.",
-				Buckets:   prometheus.DefBuckets,
+				Buckets:   latencyBuckets,
 			},
 			[]string{"method", "path"},
 		),
@@ -107,9 +123,19 @@ func newMetrics() *Metrics {
 				Subsystem: "grpc",
 				Name:      "request_duration_seconds",
 				Help:      "gRPC request duration in seconds for auth service.",
-				Buckets:   prometheus.DefBuckets,
+				Buckets:   latencyBuckets,
 			},
 			[]string{"method"},
+		),
+		AuthPasswordHashDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "auth",
+				Subsystem: "password",
+				Name:      "hash_duration_seconds",
+				Help:      "Duration of password hashing in seconds.",
+				Buckets:   passwordHashBuckets,
+			},
+			[]string{"op"},
 		),
 	}
 
@@ -120,6 +146,7 @@ func newMetrics() *Metrics {
 		m.AuthHTTPRequestDuration,
 		m.AuthGRPCRequestsTotal,
 		m.AuthGRPCRequestDuration,
+		m.AuthPasswordHashDuration,
 	)
 
 	return m
