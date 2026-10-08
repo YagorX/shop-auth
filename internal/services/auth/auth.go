@@ -119,7 +119,10 @@ func (a *Auth) Login(ctx context.Context, emailorname, password string, appID in
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
-	if err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password)); err != nil {
+	hashStarted := time.Now()
+	err = bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password))
+	observability.ObservePasswordHash("compare", hashStarted)
+	if err != nil {
 		a.log.Info("invalid credentials")
 		return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
 	}
@@ -169,7 +172,9 @@ func (a *Auth) RegisterNewUser(ctx context.Context, username, email, password st
 
 	log.Info("registering user")
 
+	hashStarted := time.Now()
 	passHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	observability.ObservePasswordHash("hash", hashStarted)
 	if err != nil {
 		log.Error("failed to generate password hash", sl.Err(err))
 		return uuid.Nil, fmt.Errorf("%s: %w", op, err)
@@ -269,7 +274,14 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int, devi
 	oldHash := sha256Hex(refreshToken)
 
 	sess, err := a.refreshProvider.RefreshSessionByHash(ctx, oldHash, deviceID, int64(appID))
-	if err != nil || sess.RevokedAt != nil || time.Now().After(sess.ExpiresAt) {
+	if errors.Is(err, storage.ErrRefreshSessionNotFound) {
+		return "", "", storage.ErrInvalidToken
+	}
+	if err != nil {
+		log.Error("failed to get refresh session", sl.Err(err))
+		return "", "", fmt.Errorf("%s: %w", op, err)
+	}
+	if sess.RevokedAt != nil || time.Now().After(sess.ExpiresAt) {
 		return "", "", storage.ErrInvalidToken
 	}
 
@@ -305,7 +317,12 @@ func (a *Auth) Refresh(ctx context.Context, refreshToken string, appID int, devi
 	newHash := sha256Hex(refreshRaw)
 	newExp := time.Now().Add(a.refreshTTL)
 
-	if err := a.refreshRotator.RotateRefreshSession(ctx, oldHash, newHash, newExp, ip, userAgent, deviceID, int64(appID)); err != nil {
+	err = a.refreshRotator.RotateRefreshSession(ctx, oldHash, newHash, newExp, ip, userAgent, deviceID, int64(appID))
+	if errors.Is(err, storage.ErrRefreshSessionNotFound) {
+		return "", "", storage.ErrInvalidToken
+	}
+	if err != nil {
+		log.Error("failed to rotate refresh session", sl.Err(err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
