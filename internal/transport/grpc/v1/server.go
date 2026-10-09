@@ -5,14 +5,17 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"time"
 
 	authv1 "github.com/YagorX/shop-contracts/gen/go/proto/auth/v1"
 	"github.com/google/uuid"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"sso/internal/storage"
 )
@@ -50,6 +53,9 @@ func (s *serverAPI) Register(ctx context.Context, req *authv1.RegisterRequest) (
 		if errors.Is(err, storage.ErrUserExist) {
 			return nil, status.Error(codes.AlreadyExists, "user already exists")
 		}
+		if errors.Is(err, storage.ErrOverloaded) {
+			return nil, overloadedError()
+		}
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
@@ -79,6 +85,9 @@ func (s *serverAPI) Login(ctx context.Context, req *authv1.LoginRequest) (*authv
 		}
 		if errors.Is(err, storage.ErrAppNotFound) {
 			return nil, status.Error(codes.NotFound, "app not found")
+		}
+		if errors.Is(err, storage.ErrOverloaded) {
+			return nil, overloadedError()
 		}
 		return nil, status.Error(codes.Internal, "internal error")
 	}
@@ -287,4 +296,17 @@ func clientIP(ctx context.Context) string {
 		return p.Addr.String()
 	}
 	return host
+}
+
+// В gRPC нет заголовка Retry-After; стандартный способ подсказать клиенту паузу —
+// RetryInfo в деталях статуса. Gateway переложит её в HTTP Retry-After.
+func overloadedError() error {
+	st := status.New(codes.ResourceExhausted, "server is busy, retry later")
+
+	withRetry, err := st.WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
+	if err != nil {
+		return st.Err()
+	}
+
+	return withRetry.Err()
 }
