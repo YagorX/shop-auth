@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"sso/internal/domain/models"
 	"sso/internal/lib/jwt"
@@ -121,22 +122,13 @@ func (a *Auth) Login(ctx context.Context, emailorname, password string, appID in
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
-	// hashStarted := time.Now()
-	// err = bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password))
-	// observability.ObservePasswordHash("compare", hashStarted)
-	// if err != nil {
-	// 	a.log.Info("invalid credentials")
-	// 	return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
-	// }
-
 	err = a.hasher.Compare(ctx, user.PasswordHash, password)
-	if err != nil {
-		if errors.Is(err, storage.ErrOverloaded) {
-			a.log.Warn("password comparison failed due to overload", sl.Err(err))
-		} else {
-			a.log.Info("invalid credentials")
-		}
+	if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+		log.Info("invalid credentials")
 		return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
 
 	app, err := a.appProvider.App(ctx, int64(appID))
@@ -184,17 +176,12 @@ func (a *Auth) RegisterNewUser(ctx context.Context, username, email, password st
 
 	log.Info("registering user")
 
-	// hashStarted := time.Now()
-	// passHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	// observability.ObservePasswordHash("hash", hashStarted)
-	// if err != nil {
-	// 	log.Error("failed to generate password hash", sl.Err(err))
-	// 	return uuid.Nil, fmt.Errorf("%s: %w", op, err)
-	// }
-
 	passHash, err := a.hasher.Hash(ctx, password)
 	if err != nil {
-		log.Error("failed to generate password hash", sl.Err(err))
+		// Отказы по перегрузке не логируем: в шторм их тысячи в секунду, и они уже видны в метриках.
+		if !errors.Is(err, storage.ErrOverloaded) {
+			log.Error("failed to generate password hash", sl.Err(err))
+		}
 		return uuid.Nil, fmt.Errorf("%s: %w", op, err)
 	}
 

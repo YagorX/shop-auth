@@ -16,6 +16,9 @@ type Metrics struct {
 	AuthGRPCRequestsTotal      *prometheus.CounterVec
 	AuthGRPCRequestDuration    *prometheus.HistogramVec
 	AuthPasswordHashDuration   *prometheus.HistogramVec
+	AuthPasswordHashSlots      prometheus.Gauge
+	AuthPasswordHashInflight   prometheus.Gauge
+	AuthPasswordHashWait       prometheus.Histogram
 }
 
 var (
@@ -33,6 +36,10 @@ var latencyBuckets = []float64{
 // bcrypt при DefaultCost — 50–100 мс; сетка гуще именно там:
 // в общей latencyBuckets на этот диапазон приходится всего две границы.
 var passwordHashBuckets = []float64{0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.25, 0.5, 1}
+
+// Ожидание слота семафора bcrypt: от «сразу» до max_wait (150 мс по умолчанию) и чуть выше.
+// Сетка гуще у верхней границы — туда ложатся отказы по перегрузке.
+var passwordHashWaitBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.2, 0.5}
 
 func MustMetrics() *Metrics {
 	metricsOnce.Do(func() {
@@ -66,6 +73,22 @@ func ObserveGRPCRequest(method, code string, started time.Time) {
 
 func ObservePasswordHash(op string, started time.Time) {
 	MustMetrics().AuthPasswordHashDuration.WithLabelValues(op).Observe(time.Since(started).Seconds())
+}
+
+func SetPasswordHashSlots(slots int64) {
+	MustMetrics().AuthPasswordHashSlots.Set(float64(slots))
+}
+
+func ObservePasswordHashWait(started time.Time) {
+	MustMetrics().AuthPasswordHashWait.Observe(time.Since(started).Seconds())
+}
+
+func PasswordHashSlotAcquired() {
+	MustMetrics().AuthPasswordHashInflight.Inc()
+}
+
+func PasswordHashSlotReleased() {
+	MustMetrics().AuthPasswordHashInflight.Dec()
 }
 
 func newMetrics() *Metrics {
@@ -137,6 +160,32 @@ func newMetrics() *Metrics {
 			},
 			[]string{"op"},
 		),
+		// Меток нет: семафор один на compare и hash.
+		AuthPasswordHashSlots: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: "auth",
+				Subsystem: "password",
+				Name:      "hash_slots",
+				Help:      "Capacity of the password hashing semaphore.",
+			},
+		),
+		AuthPasswordHashInflight: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: "auth",
+				Subsystem: "password",
+				Name:      "hash_inflight",
+				Help:      "Password hashing semaphore slots currently in use.",
+			},
+		),
+		AuthPasswordHashWait: prometheus.NewHistogram(
+			prometheus.HistogramOpts{
+				Namespace: "auth",
+				Subsystem: "password",
+				Name:      "hash_wait_seconds",
+				Help:      "Time spent waiting for a password hashing slot in seconds, including rejected waits.",
+				Buckets:   passwordHashWaitBuckets,
+			},
+		),
 	}
 
 	prometheus.MustRegister(
@@ -147,6 +196,9 @@ func newMetrics() *Metrics {
 		m.AuthGRPCRequestsTotal,
 		m.AuthGRPCRequestDuration,
 		m.AuthPasswordHashDuration,
+		m.AuthPasswordHashSlots,
+		m.AuthPasswordHashInflight,
+		m.AuthPasswordHashWait,
 	)
 
 	return m
