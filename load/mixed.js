@@ -1,5 +1,6 @@
 import grpc from 'k6/net/grpc';
 import { check } from 'k6';
+import { Rate, Trend } from 'k6/metrics';
 
 import { newClient, connect, uniq, register, login, PASSWORD, APP_ID, CALL, SUMMARY } from './lib/auth.js';
 
@@ -7,8 +8,17 @@ import { newClient, connect, uniq, register, login, PASSWORD, APP_ID, CALL, SUMM
 // Если p99 у validate вырастет вслед за нагрузкой на login — значит дорогой метод
 // топит дешёвые, и это прямое обоснование bulkhead из этапа 3 плана.
 //
-// LOGIN_RATE задаётся как ~80% от колена login, найденного в login.js.
+// LOGIN_RATE ≈ 80% от колена login проверяет, что ниже потолка всё спокойно.
+// LOGIN_RATE выше колена проверяет семафор на bcrypt: лишние логины должны получать
+// быстрый ResourceExhausted, а validate — оставаться в миллисекундах.
 const client = newClient();
+
+// Отказ по перегрузке выше потолка — ожидаемый исход, а не ошибка: его считаем отдельно.
+// Время меряется в сценарии, потому что ответ k6 не отдаёт тайминги вызова;
+// миллисекундной точности для login (десятки мс) хватает.
+const loginRejected = new Rate('login_rejected');
+const loginOkDuration = new Trend('login_ok_duration', true);
+const loginRejectedDuration = new Trend('login_rejected_duration', true);
 
 const LOGIN_RATE = Number(__ENV.LOGIN_RATE || '100');
 const VALIDATE_RATE = Number(__ENV.VALIDATE_RATE || '50');
@@ -39,9 +49,14 @@ export const options = {
   },
   thresholds: {
     // Пороги по сценариям раздельные: сравнение именно между ними и есть результат прогона.
-    'grpc_req_duration{scenario:validate}': ['p(99)<200'],
-    'grpc_req_duration{scenario:login}': ['p(99)<300'],
+    // Без семафора validate выше колена login уходил в секунды (p99 3.4 с).
+    'grpc_req_duration{scenario:validate}': ['p(99)<50'],
     'checks{scenario:validate}': ['rate>0.99'],
+    // Login отвечает либо успехом, либо честным отказом — никаких Internal и DeadlineExceeded.
+    'checks{scenario:login}': ['rate>0.99'],
+    'login_ok_duration': ['p(99)<300'],
+    // Отказ обязан быть быстрым: max_wait (150 мс) плюс сеть, а не дедлайн клиента.
+    'login_rejected_duration': ['p(99)<250'],
   },
 };
 
@@ -74,6 +89,7 @@ export function loginFlow(data) {
 
   const username = data.users[Math.floor(Math.random() * data.users.length)];
 
+  const started = Date.now();
   const res = client.invoke(
     'proto.auth.v1.AuthService/Login',
     {
@@ -84,8 +100,20 @@ export function loginFlow(data) {
     },
     CALL,
   );
+  const elapsed = Date.now() - started;
 
-  check(res, { 'status OK': (r) => r.status === grpc.StatusOK });
+  const ok = res.status === grpc.StatusOK;
+  const rejected = res.status === grpc.StatusResourceExhausted;
+
+  loginRejected.add(rejected);
+  if (ok) {
+    loginOkDuration.add(elapsed);
+  }
+  if (rejected) {
+    loginRejectedDuration.add(elapsed);
+  }
+
+  check(res, { 'OK or ResourceExhausted': () => ok || rejected });
 }
 
 export function validateFlow(data) {
