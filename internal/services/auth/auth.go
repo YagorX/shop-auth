@@ -104,23 +104,32 @@ func (a *Auth) Login(ctx context.Context, emailorname, password string, appID in
 		observability.ObserveServiceRequest(op, started, err)
 	}()
 
-	log := a.log.With(
-		slog.String("op", op),
-		slog.String("emailorname", emailorname),
-		// password либо не логируем, либо логируем в замаскированном виде
-	)
+	// Email и логин в лог не пишем: это персональные данные, а под нагрузкой — ещё и лишний объём.
+	// После поиска пользователь идентифицируется по UUID.
+	log := a.log.With(slog.String("op", op))
 
 	log.Info("attempting to login user")
 
 	user, err := a.userProvider.User(ctx, emailorname)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
-			a.log.Warn("user not found", sl.Err(err))
+			// Без bcrypt ответ «нет такого пользователя» приходил бы за доли миллисекунды против ~40 мс
+			// на проверку пароля, и по времени ответа перебирались бы зарегистрированные email.
+			// Сравнение идёт через тот же семафор: иначе выдавала бы разница в отказах по перегрузке.
+			err = a.hasher.Compare(ctx, dummyPasswordHash(), password)
+			if err != nil && !errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+				return "", "", fmt.Errorf("%s: %w", op, err)
+			}
+
+			log.Info("user not found")
+
 			return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
 		}
-		a.log.Error("failed to get user", sl.Err(err))
+		log.Error("failed to get user", sl.Err(err))
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
+
+	log = log.With(slog.String("user_uuid", user.UUID.String()))
 
 	err = a.hasher.Compare(ctx, user.PasswordHash, password)
 	if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
@@ -168,11 +177,8 @@ func (a *Auth) RegisterNewUser(ctx context.Context, username, email, password st
 		observability.ObserveServiceRequest(op, started, err)
 	}()
 
-	log := a.log.With(
-		slog.String("op", op),
-		slog.String("email", email),
-		slog.String("username", username),
-	)
+	// Email и username в лог не пишем: персональные данные. Созданный пользователь виден по UUID.
+	log := a.log.With(slog.String("op", op))
 
 	log.Info("registering user")
 
@@ -187,12 +193,16 @@ func (a *Auth) RegisterNewUser(ctx context.Context, username, email, password st
 
 	userUUID, err = a.userSaver.SaveUser(ctx, username, email, passHash)
 	if err != nil {
-		log.Error("failed to save user", sl.Err(err))
 		if errors.Is(err, storage.ErrUserExist) {
+			// Занятый email — ожидаемый ответ, а не авария.
+			log.Info("user already exists")
 			return uuid.Nil, fmt.Errorf("%s: %w", op, storage.ErrUserExist)
 		}
+		log.Error("failed to save user", sl.Err(err))
 		return uuid.Nil, fmt.Errorf("%s: %w", op, err)
 	}
+
+	log.Info("user registered", slog.String("user_uuid", userUUID.String()))
 
 	return userUUID, nil
 }

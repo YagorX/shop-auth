@@ -224,3 +224,87 @@ func TestRegisterHasherOverload(t *testing.T) {
 		t.Fatalf("err = %v, want %v", err, storage.ErrOverloaded)
 	}
 }
+
+// Запоминает, с какими хешами сравнивали пароль.
+type recordingHasher struct {
+	err      error
+	compared [][]byte
+}
+
+func (r *recordingHasher) Hash(context.Context, string) ([]byte, error) {
+	return []byte("hash"), r.err
+}
+
+func (r *recordingHasher) Compare(_ context.Context, hash []byte, _ string) error {
+	r.compared = append(r.compared, hash)
+	return r.err
+}
+
+func newLoginTestAuth(userErr error, hasher PasswordHasher) *Auth {
+	return New(
+		testLogger(),
+		nil,
+		stubUserProvider{err: userErr},
+		stubAppProvider{},
+		nil,
+		time.Hour,
+		time.Hour,
+		nil,
+		nil,
+		nil,
+		nil,
+		hasher,
+	)
+}
+
+// Несуществующий пользователь тоже платит за bcrypt: иначе ответ за доли миллисекунды
+// против ~40 мс выдаёт, зарегистрирован ли email.
+func TestLoginUnknownUserSpendsBcrypt(t *testing.T) {
+	t.Parallel()
+
+	hasher := &recordingHasher{err: bcrypt.ErrMismatchedHashAndPassword}
+	auth := newLoginTestAuth(storage.ErrUserNotFound, hasher)
+
+	_, _, err := auth.Login(context.Background(), "nobody@example.com", "secret", 1, "device-1", "", "")
+	if !errors.Is(err, storage.ErrInvalidCredentials) {
+		t.Fatalf("err = %v, want %v", err, storage.ErrInvalidCredentials)
+	}
+	if len(hasher.compared) != 1 {
+		t.Fatalf("Compare called %d times, want 1: unknown user must cost a bcrypt too", len(hasher.compared))
+	}
+}
+
+// Перегрузка на несуществующем пользователе выглядит так же, как на существующем: 429, а не 401.
+func TestLoginUnknownUserUnderOverload(t *testing.T) {
+	t.Parallel()
+
+	auth := newLoginTestAuth(storage.ErrUserNotFound, &recordingHasher{err: storage.ErrOverloaded})
+
+	_, _, err := auth.Login(context.Background(), "nobody@example.com", "secret", 1, "device-1", "", "")
+	if !errors.Is(err, storage.ErrOverloaded) {
+		t.Fatalf("err = %v, want %v", err, storage.ErrOverloaded)
+	}
+}
+
+// Время сравнения задаёт стоимость хеша: у фиктивного она обязана совпадать с настоящими паролями.
+func TestDummyPasswordHashMatchesRealCost(t *testing.T) {
+	t.Parallel()
+
+	cost, err := bcrypt.Cost(dummyPasswordHash())
+	if err != nil {
+		t.Fatalf("dummy hash is not a bcrypt hash: %v", err)
+	}
+
+	realHash, err := NewBcryptHasher(1, time.Second).Hash(context.Background(), "secret")
+	if err != nil {
+		t.Fatalf("Hash: %v", err)
+	}
+	realCost, err := bcrypt.Cost(realHash)
+	if err != nil {
+		t.Fatalf("real hash is not a bcrypt hash: %v", err)
+	}
+
+	if cost != realCost {
+		t.Fatalf("dummy hash cost = %d, real password cost = %d", cost, realCost)
+	}
+}

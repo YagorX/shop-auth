@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"sso/internal/domain/models"
 	"sso/internal/storage"
@@ -107,7 +108,7 @@ func TestLoginWithDeactivatedUser(t *testing.T) {
 				nil,
 				nil,
 				nil,
-				nil,
+				stubPasswordHasher{err: bcrypt.ErrMismatchedHashAndPassword},
 			)
 
 			_, _, err := auth.Login(context.Background(), "user@example.com", "password", 1, "device-1", "", "")

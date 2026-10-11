@@ -64,10 +64,12 @@ defer func() { observability.ObserveServiceRequest(op, started, err) }()
 | Несовпадение bcrypt | `ErrInvalidCredentials` |
 | Отозванная, просроченная или неизвестная сессия | `ErrInvalidToken` |
 | `ErrUserNotFound` в `Refresh` | `ErrInvalidToken` → `Unauthenticated`: клиент должен сбросить токены и пойти на вход |
-| `ErrUserNotFound` в `ValidateToken` | `ErrUserNotFound` → `NotFound`; gateway отвечает `401` на любую ошибку валидации |
+| `ErrUserNotFound` в `ValidateToken` | `ErrUserNotFound` → `NotFound`; gateway отвечает на него `401` |
 | Отсутствующая сессия при `Logout` | `nil` — logout идемпотентен |
 
-Приведение `ErrUserNotFound` к `ErrInvalidCredentials` — защита от user enumeration: по ответу нельзя отличить «нет такого пользователя» от «неверный пароль».
+Приведение `ErrUserNotFound` к `ErrInvalidCredentials` — защита от user enumeration: по ответу нельзя отличить «нет такого пользователя» от «неверный пароль». Одинаковый ответ — половина защиты, вторая половина — одинаковое **время**: без bcrypt ответ «не найден» приходил бы за доли миллисекунды против ~40 мс. Поэтому на этой ветке `Login` сравнивает пароль с фиктивным хешем той же стоимости (`dummyPasswordHash`) — через тот же семафор, чтобы и отказы по перегрузке не различались.
+
+Email, логин и username в логи не пишутся: это персональные данные. Пользователь в логах `Login` появляется по `user_uuid` после поиска, в `RegisterNewUser` — после создания.
 
 Деактивированный пользователь отфильтровывается на уровне SQL (см. [`storage/README.md`](../../storage/README.md)), поэтому в сервис он приходит как `ErrUserNotFound` и попадает в те же ветки.
 
@@ -79,4 +81,3 @@ defer func() { observability.ObserveServiceRequest(op, started, err) }()
 * **Кэш секретов без инвалидации.** `JWTAdapter.getApp` кладёт `models.App` в `appCache` навсегда. Ротация `apps.secret` в БД не подхватывается до рестарта процесса. Нужен TTL или явный сброс.
 * **Деактивация не обрывает выданный access-токен.** После фикса `is_active` деактивированный пользователь не войдёт и не обновит сессию, но уже выданный access живёт до `exp` — при `token_ttl: 1h` это до часа. В runbook деактивации нужен и отзыв сессий (`UPDATE user_sessions SET revoked_at = now()`), а полностью проблему закрывает `sid` в claims плюс deny-list.
 * **`Refresh` не помечает reuse.** Схема хранит `replaced_by_hash`, но код не реагирует на повторное использование уже заротированного токена — а это главный признак кражи refresh-токена. Штатная реакция: отозвать всю цепочку сессий пользователя.
-* **Логирование email при логине.** `log := a.log.With(slog.String("emailorname", emailorname))` пишет идентификатор пользователя в каждую строку лога метода — стоит оценить с точки зрения требований к PII.

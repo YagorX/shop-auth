@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -12,6 +13,19 @@ import (
 	"sso/internal/observability"
 	"sso/internal/storage"
 )
+
+// Хеш той же стоимости, что у настоящих паролей: сравнение с ним занимает столько же времени.
+// Нужен Login для несуществующих пользователей, чтобы по времени ответа нельзя было отличить
+// «нет такого email» от «неверный пароль». Считается один раз при первом обращении.
+var dummyPasswordHash = sync.OnceValue(func() []byte {
+	hash, err := bcrypt.GenerateFromPassword([]byte("timing-equalizer"), bcrypt.DefaultCost)
+	if err != nil {
+		// Не случается: пароль короче 72 байт, стоимость допустимая.
+		panic(fmt.Sprintf("generate dummy password hash: %v", err))
+	}
+
+	return hash
+})
 
 // Auth зависит от интерфейса, а не от bcrypt напрямую: в тестах хешер подменяется заглушкой.
 type PasswordHasher interface {
