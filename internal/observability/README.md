@@ -70,7 +70,6 @@ ObserveGRPCRequest(method, code string, started time.Time)
 
 ## Известные проблемы
 
-* **Метка `path` не нормализуется** — см. [`transport/http/v1/README.md`](../transport/http/v1/README.md).
 * **Нет метрик бизнес-уровня.** Есть счётчики вызовов, но нет, например, `auth_login_failures_total` с причиной отказа или счётчика активных refresh-сессий — а именно они нужны для алертов на подбор пароля.
 * **Нет sampler-политики.** `NewTracerProvider` создаётся без явного `WithSampler`, то есть используется `ParentBased(AlwaysSample)`. Под нагрузкой это отправит в Jaeger все спаны без исключения.
 * **`SetDefaultLogger` перенаправляет стандартный `log`** в slog на уровне Info. В `main.go` фатальные ошибки старта пишутся через `slog.Error`, но любая зависимость, использующая стандартный `log`, окажется в логах с `"level":"INFO"`.

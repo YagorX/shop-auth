@@ -48,7 +48,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 		mux.ServeHTTP(recorder, r)
 
-		observability.ObserveHTTPRequest(r.Method, r.URL.Path, recorder.status, started)
+		// Шаблон маршрута, а не сырой путь: иначе каждый случайный URL от сканера — новые ряды
+		// в Prometheus, и память растёт без предела. ServeMux пишет Pattern в этот же *Request.
+		path := r.Pattern
+		if path == "" {
+			path = "unmatched"
+		}
+		observability.ObserveHTTPRequest(r.Method, path, recorder.status, started)
 	}),
 		middleware.Recovery(logger))
 }
