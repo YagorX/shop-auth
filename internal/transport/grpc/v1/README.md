@@ -23,16 +23,19 @@ func Register(gRPC *grpc.Server, auth Auth)
 | Доменная ошибка | gRPC code | Сообщение клиенту |
 |---|---|---|
 | `ErrUserExist` | `AlreadyExists` | `user already exists` |
-| `ErrInvalidCredentials` | `InvalidArgument` | `invalid email or password` |
+| `ErrInvalidCredentials` | `Unauthenticated` | `invalid email or password` |
 | `ErrUserNotFound` | `NotFound` | `user not found` |
 | `ErrAppNotFound` | `NotFound` | `app not found` |
 | `ErrInvalidToken` | `Unauthenticated` | `invalid token` |
 | `ErrRefreshSessionNotFound` | `Unauthenticated` | `invalid refresh token` |
+| `ErrOverloaded` (Login, Register) | `ResourceExhausted` + `RetryInfo` 1 с | `server is busy, retry later` |
 | всё прочее | `Internal` | `internal error` |
 
 Наружу не уходит текст исходной ошибки — только фиксированная строка. Детали остаются в логах, клиент не получает информации о внутреннем устройстве.
 
-Обрати внимание на `ErrInvalidCredentials` → `InvalidArgument`: с точки зрения семантики gRPC здесь ожидался бы `Unauthenticated`. Текущий выбор сохранён ради обратной совместимости с `shop-gateway`, который уже маппит этот код на HTTP 400/401.
+Неверный пароль — `Unauthenticated`, а не `InvalidArgument`: запрос корректен, не подтвердилась личность. Gateway переводит этот код в HTTP 401, как обещает OpenAPI; `InvalidArgument` (HTTP 400) остаётся за формально кривыми запросами.
+
+`ResourceExhausted` приходит, когда семафор на bcrypt не дал слот за `password_hasher.max_wait`. В gRPC нет заголовка Retry-After, поэтому пауза передаётся стандартной деталью статуса `google.rpc.RetryInfo`; gateway перекладывает её в HTTP `Retry-After`.
 
 ## Валидация
 

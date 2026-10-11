@@ -81,7 +81,7 @@ func (s *serverAPI) Login(ctx context.Context, req *authv1.LoginRequest) (*authv
 	)
 	if err != nil {
 		if errors.Is(err, storage.ErrInvalidCredentials) {
-			return nil, status.Error(codes.InvalidArgument, "invalid email or password")
+			return nil, status.Error(codes.Unauthenticated, "invalid email or password")
 		}
 		if errors.Is(err, storage.ErrAppNotFound) {
 			return nil, status.Error(codes.NotFound, "app not found")

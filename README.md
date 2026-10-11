@@ -82,10 +82,12 @@ shop-auth/
 
 | Ситуация | gRPC code |
 |---|---|
-| Пустой обязательный аргумент, неверный пароль, некорректный UUID | `InvalidArgument` |
+| Пустой обязательный аргумент, некорректный UUID | `InvalidArgument` |
 | Пользователь уже существует | `AlreadyExists` |
 | Пользователь или `app_id` не найдены | `NotFound` |
-| Просроченный, чужой или отозванный токен | `Unauthenticated` |
+| Неверный пароль; просроченный, чужой или отозванный токен | `Unauthenticated` |
+| Все слоты bcrypt заняты дольше `max_wait` (Login, Register) | `ResourceExhausted` + `RetryInfo` |
+| Истёк дедлайн запроса | `DeadlineExceeded` |
 | Всё остальное | `Internal` |
 
 ## HTTP API

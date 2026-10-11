@@ -179,7 +179,7 @@ func TestServerLoginErrorMapping(t *testing.T) {
 		{
 			name:     "wrong password",
 			loginErr: fmt.Errorf("auth.Login: %w", storage.ErrInvalidCredentials),
-			want:     codes.InvalidArgument,
+			want:     codes.Unauthenticated,
 		},
 		{
 			// Таймаут клиента — не перегрузка: здесь он становится Internal,
