@@ -23,6 +23,11 @@ import (
 const (
 	ServiceName = "proto.auth.v1.AuthService"
 	emptyValue  = 0
+
+	// Предел bcrypt. Длиннее Register отказывал бы с Internal, а Login сравнивал бы только первые
+	// 72 байта: к 72-байтному паролю можно было бы дописать что угодно. Считаются байты, а не символы:
+	// кириллица в UTF-8 — два байта на букву.
+	maxPasswordBytes = 72
 )
 
 type Auth interface {
@@ -196,6 +201,9 @@ func validateRegister(req *authv1.RegisterRequest) error {
 	if req.GetPassword() == "" {
 		return status.Error(codes.InvalidArgument, "password is required")
 	}
+	if len(req.GetPassword()) > maxPasswordBytes {
+		return status.Error(codes.InvalidArgument, "password must be at most 72 bytes")
+	}
 	if req.GetUsername() == "" {
 		return status.Error(codes.InvalidArgument, "username is required")
 	}
@@ -208,6 +216,9 @@ func validateLogin(req *authv1.LoginRequest) error {
 	}
 	if req.GetPassword() == "" {
 		return status.Error(codes.InvalidArgument, "password is required")
+	}
+	if len(req.GetPassword()) > maxPasswordBytes {
+		return status.Error(codes.InvalidArgument, "password must be at most 72 bytes")
 	}
 	if req.GetAppId() == emptyValue {
 		return status.Error(codes.InvalidArgument, "app_id is required")

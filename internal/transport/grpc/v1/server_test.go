@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	authv1 "github.com/YagorX/shop-contracts/gen/go/proto/auth/v1"
@@ -199,6 +200,45 @@ func TestServerLoginErrorMapping(t *testing.T) {
 			_, err := srv.Login(context.Background(), validLoginRequest())
 			if got := status.Code(err); got != tt.want {
 				t.Fatalf("code = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+// bcrypt учитывает только первые 72 байта: длиннее Register падал бы с Internal,
+// а в Login к 72-байтному паролю можно было бы дописать что угодно.
+func TestServerRejectsPasswordsOverBcryptLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		password string
+		want     codes.Code
+	}{
+		{name: "72 bytes", password: strings.Repeat("a", 72), want: codes.OK},
+		{name: "73 bytes", password: strings.Repeat("a", 73), want: codes.InvalidArgument},
+		// 37 кириллических букв — 74 байта в UTF-8: предел в байтах, а не в символах.
+		{name: "37 cyrillic letters", password: strings.Repeat("я", 37), want: codes.InvalidArgument},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := &serverAPI{auth: stubAuth{}}
+
+			register := validRegisterRequest()
+			register.Password = tt.password
+			_, err := srv.Register(context.Background(), register)
+			if got := status.Code(err); got != tt.want {
+				t.Fatalf("Register: code = %s, want %s", got, tt.want)
+			}
+
+			login := validLoginRequest()
+			login.Password = tt.password
+			_, err = srv.Login(context.Background(), login)
+			if got := status.Code(err); got != tt.want {
+				t.Fatalf("Login: code = %s, want %s", got, tt.want)
 			}
 		})
 	}
