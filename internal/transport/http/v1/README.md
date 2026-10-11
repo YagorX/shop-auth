@@ -53,14 +53,26 @@ flowchart LR
 
 `/admin/log-level` работает через `slog.LevelVar` — атомарную переменную, которую держит `RuntimeLogger`. Смена уровня видна немедленно во всех горутинах, перезапуск не нужен.
 
+Эндпоинт закрыт `middleware.RequireAdmin`: нужен access-токен администратора и `X-App-Id`. Токен проверяется напрямую через сервис (`ValidateToken`, затем `IsAdminByUUID`) — auth сам выпускает токены, ходить для этого по сети не нужно.
+
+| Ситуация | Ответ |
+|---|---|
+| Нет `Bearer`-токена | `401` |
+| Нет или кривой `X-App-Id` | `400` |
+| Токен невалиден, пользователь удалён или деактивирован | `401` |
+| Пользователь не администратор | `403` |
+| Отказ базы при проверке | `500` — не выдаётся за плохой токен |
+| `RouterDeps.Admin` не передан | `500` — эндпоинт закрыт, а не открыт |
+
 ```bash
-curl http://localhost:8082/admin/log-level
-curl -X POST "http://localhost:8082/admin/log-level?level=debug"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" -H "X-App-Id: 1" http://localhost:8082/admin/log-level
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "X-App-Id: 1" "http://localhost:8082/admin/log-level?level=debug"
 ```
+
+В compose порт 8082 на хост не публикуется вовсе: снаружи до админки не достучаться даже с токеном.
 
 Практический смысл: включить `debug` на время разбора инцидента и выключить, не теряя процесс и его состояние.
 
 ## Известные проблемы
 
-* **`/admin/log-level` без аутентификации.** Порт 8082 публикуется на хост в compose. Смена уровня на `debug` в проде — это и рост объёма логов, и потенциальная утечка деталей в них. Сравни с `shop-proxy`, где `/admin/*` закрыт middleware через `ValidateToken` + `IsAdmin`.
 * **`deps.LogLevelController.GetSlog()` вызывается без проверки на nil** — если зависимость не передали, роутер упадёт на этапе сборки, а не вернёт ошибку.

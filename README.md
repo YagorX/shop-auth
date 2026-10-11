@@ -99,7 +99,7 @@ shop-auth/
 | `GET` | `/health` | Liveness: процесс жив |
 | `GET` | `/ready` | Readiness: `PingContext` к PostgreSQL |
 | `GET` | `/metrics` | Prometheus |
-| `GET` `POST` | `/admin/log-level` | Прочитать и сменить уровень логов на живом процессе |
+| `GET` `POST` | `/admin/log-level` | Прочитать и сменить уровень логов на живом процессе; только с токеном администратора |
 
 ---
 

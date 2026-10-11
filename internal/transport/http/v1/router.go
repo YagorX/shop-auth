@@ -15,6 +15,8 @@ import (
 type RouterDeps struct {
 	LogLevelController contracts.LogLevelController
 	ReadinessChecker   contracts.ReadinessChecker
+	// Проверка токена и роли для /admin/*. Если не передан, админ-эндпоинты отказывают всем.
+	Admin contracts.AdminAuthorizer
 }
 
 type statusRecorder struct {
@@ -37,7 +39,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("/health", healthHandler.Health)
 	mux.HandleFunc("/ready", healthHandler.Ready)
 	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/admin/log-level", adminHandler.LogLevel)
+	mux.Handle("/admin/log-level", middleware.RequireAdmin(logger, deps.Admin)(http.HandlerFunc(adminHandler.LogLevel)))
 
 	return middleware.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()

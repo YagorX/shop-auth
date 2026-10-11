@@ -178,6 +178,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	httpRouter := httpv1.NewRouter(httpv1.RouterDeps{
 		LogLevelController: runtimeLogger,
 		ReadinessChecker:   postgres.NewHealthChecker(db, 2*time.Second),
+		Admin:              authService,
 	})
 
 	httpServer := &http.Server{
