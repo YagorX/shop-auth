@@ -188,6 +188,7 @@ func TestLoginHasherErrors(t *testing.T) {
 				nil,
 				nil,
 				stubPasswordHasher{err: tt.hasherErr},
+				&fakeLoginLimiter{},
 			)
 
 			_, _, err := auth.Login(context.Background(), "user", "secret", 1, "device-1", "", "")
@@ -217,6 +218,7 @@ func TestRegisterHasherOverload(t *testing.T) {
 		nil,
 		nil,
 		stubPasswordHasher{err: storage.ErrOverloaded},
+		nil,
 	)
 
 	_, err := auth.RegisterNewUser(context.Background(), "user", "user@example.com", "secret")
@@ -254,6 +256,7 @@ func newLoginTestAuth(userErr error, hasher PasswordHasher) *Auth {
 		nil,
 		nil,
 		hasher,
+		&fakeLoginLimiter{},
 	)
 }
 

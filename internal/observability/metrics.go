@@ -19,6 +19,9 @@ type Metrics struct {
 	AuthPasswordHashSlots      prometheus.Gauge
 	AuthPasswordHashInflight   prometheus.Gauge
 	AuthPasswordHashWait       prometheus.Histogram
+	AuthLoginFailuresTotal     *prometheus.CounterVec
+	AuthLoginLockoutsTotal     prometheus.Counter
+	AuthLoginLimiterKeys       prometheus.Gauge
 }
 
 var (
@@ -91,6 +94,19 @@ func PasswordHashSlotAcquired() {
 
 func PasswordHashSlotReleased() {
 	MustMetrics().AuthPasswordHashInflight.Dec()
+}
+
+// reason — invalid_credentials или locked.
+func LoginFailed(reason string) {
+	MustMetrics().AuthLoginFailuresTotal.WithLabelValues(reason).Inc()
+}
+
+func LoginLocked() {
+	MustMetrics().AuthLoginLockoutsTotal.Inc()
+}
+
+func SetLoginLimiterKeys(count int) {
+	MustMetrics().AuthLoginLimiterKeys.Set(float64(count))
 }
 
 func newMetrics() *Metrics {
@@ -188,6 +204,32 @@ func newMetrics() *Metrics {
 				Buckets:   passwordHashWaitBuckets,
 			},
 		),
+		AuthLoginFailuresTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "auth",
+				Subsystem: "login",
+				Name:      "failures_total",
+				Help:      "Total number of failed login attempts.",
+			},
+			// Только причина: метка с логином дала бы ряд на каждый email из перебора и персональные данные в Prometheus.
+			[]string{"reason"},
+		),
+		AuthLoginLockoutsTotal: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Namespace: "auth",
+				Subsystem: "login",
+				Name:      "lockouts_total",
+				Help:      "Total number of login lockouts due to too many failed attempts.",
+			},
+		),
+		AuthLoginLimiterKeys: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: "auth",
+				Subsystem: "login",
+				Name:      "limiter_keys",
+				Help:      "Current number of keys in the login limiter.",
+			},
+		),
 	}
 
 	prometheus.MustRegister(
@@ -201,7 +243,15 @@ func newMetrics() *Metrics {
 		m.AuthPasswordHashSlots,
 		m.AuthPasswordHashInflight,
 		m.AuthPasswordHashWait,
+		m.AuthLoginFailuresTotal,
+		m.AuthLoginLockoutsTotal,
+		m.AuthLoginLimiterKeys,
 	)
+
+	// Ряды с нулём видны сразу: rate() и алерты работают и до первой неудачи.
+	for _, reason := range []string{"invalid_credentials", "locked"} {
+		m.AuthLoginFailuresTotal.WithLabelValues(reason)
+	}
 
 	return m
 }

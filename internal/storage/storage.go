@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"time"
 )
 
 var (
@@ -14,3 +15,9 @@ var (
 	ErrInvalidToken           = errors.New("invalid token")
 	ErrOverloaded             = errors.New("too many requests, please try again later")
 )
+
+type LoginLockedError struct {
+	RetryAfter time.Duration
+}
+
+func (e *LoginLockedError) Error() string { return "too many failed login attempts" }

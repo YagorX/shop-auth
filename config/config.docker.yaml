@@ -48,3 +48,7 @@ password_hasher:
   max_concurrent: 0         # 0 — по GOMAXPROCS (×3/4): bcrypt грузит CPU, больше параллельных хешей = только длиннее каждый
   max_wait: 150ms           # сколько ждать слот, прежде чем отказать ResourceExhausted; должно быть < grpc.timeout
 
+login_limiter:
+  max_failures: 5           # неудачных входов на один логин за window — и вход по нему блокируется
+  window: 15m               # окно считается от первой неудачи
+  lockout: 5m               # короткая: атакующий может нарочно блокировать вход чужому аккаунту

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	authv1 "github.com/YagorX/shop-contracts/gen/go/proto/auth/v1"
 	"github.com/google/uuid"
@@ -239,6 +240,104 @@ func TestServerRejectsPasswordsOverBcryptLimit(t *testing.T) {
 			_, err = srv.Login(context.Background(), login)
 			if got := status.Code(err); got != tt.want {
 				t.Fatalf("Login: code = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func errorInfoReason(t *testing.T, st *status.Status) string {
+	t.Helper()
+
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok {
+			if info.GetDomain() != errorDomain {
+				t.Fatalf("ErrorInfo.Domain = %q, want %q", info.GetDomain(), errorDomain)
+			}
+			return info.GetReason()
+		}
+	}
+	t.Fatalf("в деталях статуса нет ErrorInfo: %v", st.Details())
+
+	return ""
+}
+
+// Блокировка входа и перегрузка — обе ResourceExhausted, а различает их gateway по ErrorInfo.Reason.
+// Для блокировки RetryInfo — остаток до разблокировки, чтобы клиент не долбился раньше.
+func TestServerLoginResourceExhaustedReasons(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		loginErr   error
+		wantReason string
+		wantDelay  time.Duration
+	}{
+		{
+			name:       "login locked",
+			loginErr:   fmt.Errorf("auth.Login: %w", &storage.LoginLockedError{RetryAfter: 4 * time.Minute}),
+			wantReason: reasonLoginLocked,
+			wantDelay:  4 * time.Minute,
+		},
+		{
+			name:       "hasher overloaded",
+			loginErr:   fmt.Errorf("auth.Login: %w", storage.ErrOverloaded),
+			wantReason: reasonOverloaded,
+			wantDelay:  time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := &serverAPI{auth: stubAuth{loginErr: tt.loginErr}}
+
+			_, err := srv.Login(context.Background(), validLoginRequest())
+			st, ok := status.FromError(err)
+			if !ok || st.Code() != codes.ResourceExhausted {
+				t.Fatalf("err = %v, want ResourceExhausted", err)
+			}
+			if got := errorInfoReason(t, st); got != tt.wantReason {
+				t.Fatalf("ErrorInfo.Reason = %q, want %q", got, tt.wantReason)
+			}
+
+			var delay time.Duration
+			for _, d := range st.Details() {
+				if ri, ok := d.(*errdetails.RetryInfo); ok {
+					delay = ri.GetRetryDelay().AsDuration()
+				}
+			}
+			if delay != tt.wantDelay {
+				t.Fatalf("RetryDelay = %v, want %v", delay, tt.wantDelay)
+			}
+		})
+	}
+}
+
+// Предел в символах, а не в байтах: колонка email — VARCHAR(255).
+func TestServerRejectsTooLongLogin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		login string
+		want  codes.Code
+	}{
+		{name: "255 cyrillic letters", login: strings.Repeat("я", 255), want: codes.OK},
+		{name: "256 characters", login: strings.Repeat("a", 256), want: codes.InvalidArgument},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := &serverAPI{auth: stubAuth{}}
+
+			req := validLoginRequest()
+			req.EmailOrName = tt.login
+			_, err := srv.Login(context.Background(), req)
+			if got := status.Code(err); got != tt.want {
+				t.Fatalf("code = %s, want %s", got, tt.want)
 			}
 		})
 	}

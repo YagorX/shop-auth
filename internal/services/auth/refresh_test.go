@@ -42,6 +42,7 @@ func newRefreshTestAuth(session models.RefreshSession, lookupErr, rotateErr erro
 		stubRefreshSessionRotator{err: rotateErr},
 		nil,
 		nil,
+		nil,
 	)
 }
 

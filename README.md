@@ -86,7 +86,8 @@ shop-auth/
 | Пользователь уже существует | `AlreadyExists` |
 | Пользователь или `app_id` не найдены | `NotFound` |
 | Неверный пароль; просроченный, чужой или отозванный токен | `Unauthenticated` |
-| Все слоты bcrypt заняты дольше `max_wait` (Login, Register) | `ResourceExhausted` + `RetryInfo` |
+| Все слоты bcrypt заняты дольше `max_wait` (Login, Register) | `ResourceExhausted` + `RetryInfo` (1 с) + `ErrorInfo{reason: SERVER_OVERLOADED}` |
+| Логин заблокирован после серии неудач (Login) | `ResourceExhausted` + `RetryInfo` (до разблокировки) + `ErrorInfo{reason: LOGIN_LOCKED}` |
 | Истёк дедлайн запроса | `DeadlineExceeded` |
 | Всё остальное | `Internal` |
 
@@ -117,6 +118,7 @@ sequenceDiagram
     GW->>T: Login(email_or_name, password, app_id, device_id)
     T->>T: валидация аргументов
     T->>S: Login(...)
+    S->>S: лимит неудач по логину: заблокирован → ResourceExhausted
     S->>DB: SELECT users WHERE email=$1 OR username=$1
     DB-->>S: User{PasswordHash, UUID, IsActive}
     S->>S: bcrypt.CompareHashAndPassword
@@ -243,6 +245,8 @@ erDiagram
 | `postgres` (пул) | `max_open_conns` (25), `max_idle_conns` (25), `conn_max_lifetime` (5m), `conn_max_idle_time` (1m) | Потолок на **один** инстанс: `max_open_conns × инстансы < max_connections` |
 | `postgres` (старт) | `statement_timeout` (5s), `connect_timeout` (5s), `connect_retries` (6) | Серверный лимит на запрос и повторы ping с удвоением паузы |
 | `tls` | `enabled`, `cert_file`, `key_file`, `ca_file`, `client_ca_file`, `require_client_cert` | |
+| `password_hasher` | `max_concurrent` (0 — 3/4 от `GOMAXPROCS`), `max_wait` (150ms) | Семафор на bcrypt; `max_wait` < `grpc.timeout` |
+| `login_limiter` | `max_failures` (5), `window` (15m), `lockout` (5m) | Блокировка входа по логину, см. [`services/auth`](internal/services/auth/README.md#лимит-неудачных-входов) |
 | `otlp` | `endpoint` | Пустой или недоступный — трейсинг отключается с warning, сервис поднимается |
 
 Конфиг проходит `Validate()` при загрузке: проверяются непустые имена, положительные TTL и таймауты, корректность портов и уровня логирования. Отдельно — параметры пула: `max_open_conns` и `conn_max_lifetime` обязаны быть `> 0` (в `database/sql` `0` означает «без лимита» и «жить вечно»), а `max_idle_conns` не может превышать `max_open_conns`.
@@ -306,6 +310,9 @@ grpcurl -plaintext -d '{"username":"demo","email":"demo@example.com","password":
 | `auth_http_request_duration_seconds` | `method`, `path` |
 | `auth_grpc_requests_total` | `method`, `code` |
 | `auth_grpc_request_duration_seconds` | `method` |
+| `auth_login_failures_total` | `reason` (`invalid_credentials`, `locked`) |
+| `auth_login_lockouts_total` | — |
+| `auth_login_limiter_keys` | — |
 
 Сервисный слой инструментирован через `defer observability.ObserveServiceRequest(op, started, err)` в каждом методе, gRPC — unary-интерцептором.
 
@@ -345,4 +352,5 @@ go test ./tests/...
 4. **`audit_logs` и `system_metrics` — мёртвая схема.** Таблицы и модель `AuditLog` есть, записи не происходит нигде.
 5. **Миграции `0003_seed_roles.sql` и `0004_seed_apps.sql`** названы не по схеме `golang-migrate` (`0003_` вместо `000003_`, нет суффикса `.up`) и дублируют сиды, уже выполненные в `000001`.
 6. **Незакоммиченные изменения** в `Dockerfile` на момент аудита.
-7. **Перебор несуществующих email занимает слоты bcrypt.** Чтобы время ответа не выдавало, есть ли аккаунт, `Login` гоняет bcrypt и для неизвестного пользователя. Плата: поток логинов по случайным email расходует те же слоты семафора, и настоящие пользователи при такой атаке получают `429`. Validate это не задевает (семафор оставляет ему ядра), а сдерживает атаку лимит по IP в gateway; лимит на аккаунт тут не поможет — у несуществующего email аккаунта нет.
+7. **Перебор несуществующих email занимает слоты bcrypt.** Чтобы время ответа не выдавало, есть ли аккаунт, `Login` гоняет bcrypt и для неизвестного пользователя. Плата: поток логинов по случайным email расходует те же слоты семафора, и настоящие пользователи при такой атаке получают `429`. Validate это не задевает (семафор оставляет ему ядра), а сдерживает атаку лимит неудачных входов по IP в gateway (`login_failure_limit`); лимит по логину тут не поможет — каждый случайный email получает свои пять попыток.
+8. **Лимит неудачных входов по логину — в памяти процесса.** При N инстансах порог фактически ×N, рестарт обнуляет блокировки; плюс наведение блокировки на чужой аккаунт и регистрозависимые email. Подробно — в [`services/auth`](internal/services/auth/README.md#известные-проблемы).

@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	authv1 "github.com/YagorX/shop-contracts/gen/go/proto/auth/v1"
 	"github.com/google/uuid"
@@ -28,6 +29,17 @@ const (
 	// 72 байта: к 72-байтному паролю можно было бы дописать что угодно. Считаются байты, а не символы:
 	// кириллица в UTF-8 — два байта на букву.
 	maxPasswordBytes = 72
+
+	// Длиннее колонки email (VARCHAR(255)) логина в базе быть не может. Без предела строка до 4 МБ
+	// уходила бы в запрос к БД и в sha256 лимитера неудачных входов.
+	maxLoginRunes = 255
+)
+
+const (
+	// Причины в ErrorInfo — контракт с gateway: по ним он выбирает error.code в ответе 429.
+	errorDomain       = "auth.shop"
+	reasonOverloaded  = "SERVER_OVERLOADED"
+	reasonLoginLocked = "LOGIN_LOCKED"
 )
 
 type Auth interface {
@@ -85,6 +97,10 @@ func (s *serverAPI) Login(ctx context.Context, req *authv1.LoginRequest) (*authv
 		ua,
 	)
 	if err != nil {
+		var locked *storage.LoginLockedError
+		if errors.As(err, &locked) {
+			return nil, resourceExhaustedError("too many failed login attempts, retry later", reasonLoginLocked, locked.RetryAfter)
+		}
 		if errors.Is(err, storage.ErrInvalidCredentials) {
 			return nil, status.Error(codes.Unauthenticated, "invalid email or password")
 		}
@@ -226,6 +242,9 @@ func validateLogin(req *authv1.LoginRequest) error {
 	if strings.TrimSpace(req.GetDeviceId()) == "" {
 		return status.Error(codes.InvalidArgument, "device_id is required")
 	}
+	if utf8.RuneCountInString(req.GetEmailOrName()) > maxLoginRunes {
+		return status.Error(codes.InvalidArgument, "email_or_name must be at most 255 characters")
+	}
 	return nil
 }
 
@@ -310,14 +329,21 @@ func clientIP(ctx context.Context) string {
 }
 
 // В gRPC нет заголовка Retry-After; стандартный способ подсказать клиенту паузу —
-// RetryInfo в деталях статуса. Gateway переложит её в HTTP Retry-After.
-func overloadedError() error {
-	st := status.New(codes.ResourceExhausted, "server is busy, retry later")
+// RetryInfo в деталях статуса. Gateway переложит её в HTTP Retry-After, а по ErrorInfo выберет error.code.
+func resourceExhaustedError(msg, reason string, retryAfter time.Duration) error {
+	st := status.New(codes.ResourceExhausted, msg)
 
-	withRetry, err := st.WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
+	withDetails, err := st.WithDetails(
+		&errdetails.RetryInfo{RetryDelay: durationpb.New(retryAfter)},
+		&errdetails.ErrorInfo{Reason: reason, Domain: errorDomain},
+	)
 	if err != nil {
 		return st.Err()
 	}
 
-	return withRetry.Err()
+	return withDetails.Err()
+}
+
+func overloadedError() error {
+	return resourceExhaustedError("server is busy, retry later", reasonOverloaded, time.Second)
 }

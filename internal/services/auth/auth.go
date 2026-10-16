@@ -30,6 +30,7 @@ type Auth struct {
 	log             *slog.Logger
 	tokenTTL        time.Duration
 	refreshTTL      time.Duration
+	loginLimiter    LoginLimiter
 }
 
 type UserSaver interface {
@@ -67,6 +68,12 @@ type RefreshSessionRevoker interface {
 	RevokeRefreshSession(ctx context.Context, hash string, deviceID string, appID int64) error
 }
 
+type LoginLimiter interface {
+	Check(login string) time.Duration
+	Fail(login string) (lockedNow bool)
+	Reset(login string)
+}
+
 func New(
 	log *slog.Logger,
 	userSaver UserSaver,
@@ -80,6 +87,7 @@ func New(
 	refreshRotator RefreshSessionRotator,
 	refreshRevoker RefreshSessionRevoker,
 	hasher PasswordHasher,
+	loginLimiter LoginLimiter,
 ) *Auth {
 	return &Auth{
 		userSaver:       userSaver,
@@ -94,6 +102,7 @@ func New(
 		tokenTTL:        tokenTTL,
 		refreshTTL:      refreshTTL,
 		hasher:          hasher,
+		loginLimiter:    loginLimiter,
 	}
 }
 
@@ -110,6 +119,14 @@ func (a *Auth) Login(ctx context.Context, emailorname, password string, appID in
 
 	log.Info("attempting to login user")
 
+	// До поиска пользователя и до bcrypt: заблокированный логин не стоит ни запроса в БД,
+	// ни слота семафора, а ответ одинаков для существующих и несуществующих аккаунтов.
+	// Не логируем: в атаку таких отказов тысячи, они видны в auth_login_failures_total{reason="locked"}.
+	if wait := a.loginLimiter.Check(emailorname); wait > 0 {
+		observability.LoginFailed("locked")
+		return "", "", fmt.Errorf("%s: %w", op, &storage.LoginLockedError{RetryAfter: wait})
+	}
+
 	user, err := a.userProvider.User(ctx, emailorname)
 	if err != nil {
 		if errors.Is(err, storage.ErrUserNotFound) {
@@ -123,6 +140,7 @@ func (a *Auth) Login(ctx context.Context, emailorname, password string, appID in
 
 			log.Info("user not found")
 
+			a.loginFailed(log, emailorname)
 			return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
 		}
 		log.Error("failed to get user", sl.Err(err))
@@ -134,11 +152,14 @@ func (a *Auth) Login(ctx context.Context, emailorname, password string, appID in
 	err = a.hasher.Compare(ctx, user.PasswordHash, password)
 	if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
 		log.Info("invalid credentials")
+		a.loginFailed(log, emailorname)
 		return "", "", fmt.Errorf("%s: %w", op, storage.ErrInvalidCredentials)
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("%s: %w", op, err)
 	}
+
+	a.loginLimiter.Reset(emailorname)
 
 	app, err := a.appProvider.App(ctx, int64(appID))
 	if err != nil {
@@ -373,4 +394,14 @@ func (a *Auth) Logout(ctx context.Context, refreshToken string, appID int64, dev
 	}
 
 	return nil
+}
+
+// Считаем только неверные учётные данные. Отказ семафора или истёкший дедлайн — не подбор:
+// посчитай мы их, в перегрузку лимитер начал бы блокировать честных пользователей.
+func (a *Auth) loginFailed(log *slog.Logger, login string) {
+	observability.LoginFailed("invalid_credentials")
+	if a.loginLimiter.Fail(login) {
+		// Один раз на блокировку, а не на каждый отказ.
+		log.Warn("login locked after repeated failures")
+	}
 }

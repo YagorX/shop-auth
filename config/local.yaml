@@ -36,3 +36,8 @@ tls:
 password_hasher:
   max_concurrent: 0
   max_wait: 150ms
+
+login_limiter:
+  max_failures: 5
+  window: 15m
+  lockout: 5m

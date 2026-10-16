@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	grpcapp "sso/internal/app/grpc"
@@ -32,10 +33,14 @@ type App struct {
 	GRPCServer *grpcapp.App
 	HTTPServer *httpapp.App
 
-	db *sql.DB
+	db           *sql.DB
+	loginLimiter *authsvc.InMemoryLoginLimiter
 
 	shutdownTracing func(context.Context) error
 	errCh           chan error
+
+	stopBackground context.CancelFunc
+	background     sync.WaitGroup
 }
 
 func buildGRPCServerOptions(cfg *config.Config) ([]grpc.ServerOption, error) {
@@ -144,6 +149,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	jwtAdapter := authsvc.NewJWTAdapter(storage)
 	hasher := authsvc.NewBcryptHasher(cfg.PasswordHasher.MaxConcurrent, cfg.PasswordHasher.MaxWait)
+	loginLimiter := authsvc.NewInMemoryLoginLimiter(cfg.LoginLimiter.MaxFailures, cfg.LoginLimiter.Window, cfg.LoginLimiter.Lockout)
 
 	authService := authsvc.New(
 		runtimeLogger.Logger,
@@ -158,6 +164,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		storage,
 		storage,
 		hasher,
+		loginLimiter,
 	)
 
 	grpcOpts, err := buildGRPCServerOptions(cfg)
@@ -202,6 +209,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		GRPCServer:      grpcRuntime,
 		HTTPServer:      httpRuntime,
 		db:              db,
+		loginLimiter:    loginLimiter,
 		shutdownTracing: shutdownTracing,
 		errCh:           make(chan error, 2),
 	}, nil
@@ -211,6 +219,10 @@ func (a *App) Run() error {
 	if a == nil {
 		return errors.New("app is nil")
 	}
+
+	bgCtx, cancel := context.WithCancel(context.Background())
+	a.stopBackground = cancel
+	a.background.Go(func() { a.loginLimiter.Run(bgCtx) })
 
 	go func() {
 		if err := a.GRPCServer.Run(); err != nil {
@@ -250,6 +262,11 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 	if a.GRPCServer != nil {
 		a.GRPCServer.Stop()
+	}
+
+	if a.stopBackground != nil {
+		a.stopBackground()
+		a.background.Wait()
 	}
 
 	if a.HTTPServer != nil {

@@ -24,6 +24,13 @@ type Config struct {
 	Postgres        PostgresConfig       `yaml:"postgres"`
 	TLS             TLSConfig            `yaml:"tls"`
 	PasswordHasher  PasswordHasherConfig `yaml:"password_hasher"`
+	LoginLimiter    LoginLimiterConfig   `yaml:"login_limiter"`
+}
+
+type LoginLimiterConfig struct {
+	MaxFailures int           `yaml:"max_failures" env-default:"5"`
+	Window      time.Duration `yaml:"window" env-default:"15m"`
+	Lockout     time.Duration `yaml:"lockout" env-default:"5m"`
 }
 
 type PasswordHasherConfig struct {
@@ -86,6 +93,16 @@ func MustLoadByPath(path string) *Config {
 func (c *Config) Validate() error {
 	if c == nil {
 		return fmt.Errorf("config is nil")
+	}
+
+	if c.LoginLimiter.MaxFailures <= 0 {
+		return fmt.Errorf("login_limiter.max_failures must be > 0")
+	}
+	if c.LoginLimiter.Window <= 0 {
+		return fmt.Errorf("login_limiter.window must be > 0")
+	}
+	if c.LoginLimiter.Lockout <= 0 {
+		return fmt.Errorf("login_limiter.lockout must be > 0")
 	}
 
 	if strings.TrimSpace(c.ServiceName) == "" {
